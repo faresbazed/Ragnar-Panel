@@ -192,8 +192,22 @@ DROPBEAR_EXTRA_ARGS="-p 143 -W 65536"
 DROPBEAR_BANNER=""
 DROPBEAR_RECEIVE_WINDOW=1048576
 EOF
-systemctl enable --now ssh dropbear 2>/dev/null || \
-    { systemctl enable --now sshd 2>/dev/null; systemctl restart dropbear; }
+# Panel accounts are forwarding-only (shell /bin/false). Dropbear refuses
+# logins for shells missing from /etc/shells ("User X has invalid shell,
+# rejected") - and Debian's /etc/shells does NOT list /bin/false while
+# Ubuntu's does, so panel users could never log in on Debian. Add both
+# spellings on every distro.
+for sh in /bin/false /usr/bin/false; do
+    grep -qx "$sh" /etc/shells 2>/dev/null || echo "$sh" >> /etc/shells
+done
+systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
+systemctl enable dropbear 2>/dev/null || true
+# "enable --now" alone is NOT enough on Debian: the dropbear package's
+# postinst starts the sysv-generated unit at apt-install time, while
+# /etc/default/dropbear still holds the package default NO_START=1, so
+# the unit sits in "active (exited)" with no daemon listening and --now
+# is a no-op. Restart it now that the config above is in place.
+systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null || true
 
 # Landing page (harmless "It works" page for plain HTTPS visitors on 443)
 mkdir -p "$BASE/www"

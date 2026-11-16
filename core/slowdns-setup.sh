@@ -266,6 +266,11 @@ systemctl disable masterdnsvpn 2>/dev/null || true
 # ---------------------------------------------------------------------
 # 6. systemd unit (their shape, this panel's key path)
 # ---------------------------------------------------------------------
+# The unit must call iptables by absolute path, but that path differs by
+# distro: /sbin/iptables on Ubuntu, /usr/sbin/iptables on Debian (where
+# /sbin/iptables simply does not exist and systemd silently skips the
+# ExecStartPre lines). Resolve it here instead of hardcoding one distro.
+IPTABLES_BIN=$(command -v iptables || echo /usr/sbin/iptables)
 cat > /etc/systemd/system/slowdns.service <<EOF
 [Unit]
 Description=Ragnar Turbo SlowDNS (DNSTT) Server (UDP 53 -> 5300 -> 127.0.0.1:${TARGET}, MTU ${MTU})
@@ -275,10 +280,10 @@ After=network.target ssh.service dropbear.service
 Type=simple
 Nice=-15
 LimitNOFILE=1000000
-ExecStartPre=-/sbin/iptables -I INPUT -p udp --dport 53 -j ACCEPT
-ExecStartPre=-/sbin/iptables -I INPUT -p udp --dport 5300 -j ACCEPT
-ExecStartPre=-/sbin/iptables -t nat -D PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
-ExecStartPre=-/sbin/iptables -t nat -I PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
+ExecStartPre=-${IPTABLES_BIN} -I INPUT -p udp --dport 53 -j ACCEPT
+ExecStartPre=-${IPTABLES_BIN} -I INPUT -p udp --dport 5300 -j ACCEPT
+ExecStartPre=-${IPTABLES_BIN} -t nat -D PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
+ExecStartPre=-${IPTABLES_BIN} -t nat -I PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
 ExecStart=$BIN -udp :5300 -mtu ${MTU} -privkey-file $SD_DIR/server.key ${NS} 127.0.0.1:${TARGET}
 Restart=always
 RestartSec=2
