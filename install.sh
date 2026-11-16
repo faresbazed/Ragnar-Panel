@@ -246,6 +246,15 @@ if ! command -v xray >/dev/null; then
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
         || warn "Xray install failed - install it manually, then run: menu -> Tools -> Restart ALL"
 fi
+# The upstream Xray installer plants /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf,
+# which overrides ExecStart to /usr/local/etc/xray/config.json. The panel writes users only to
+# /etc/ragnar/xray/config.json, so Xray kept serving the install-time copy (zero users once anyone was
+# added) - observed live 2026-11-15 on the trial VPS ("invalid request user id"). Remove the drop-in
+# (also on reinstalls, where xray already exists and the installer above is skipped) so the panel's
+# own xray.service below (ExecStart=/etc/ragnar/xray/config.json) wins. daemon-reload runs later
+# in this script, before the services are enabled.
+rm -f /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf
+rmdir /etc/systemd/system/xray.service.d 2>/dev/null || true
 mkdir -p /usr/local/etc/xray
 if ! command -v sing-box >/dev/null; then
     bash -c "$(curl -fsSL https://sing-box.app/install.sh)" \
@@ -512,7 +521,10 @@ netfilter-persistent save >/dev/null 2>&1 || \
 # Generate configs + start everything
 # ---------------------------------------------------------------------
 RAGNAR_DIR="$BASE" python3 "$BASE/core/ragnar.py" gen-configs || true
-cp "$BASE/xray/config.json" /usr/local/etc/xray/config.json 2>/dev/null || true
+# NOTE: do NOT copy the panel config to /usr/local/etc/xray/config.json - that path is the
+# upstream installer's default, and a copy there goes stale the moment a user is added
+# (the panel only regenerates /etc/ragnar/xray/config.json). The drop-in removal above
+# makes Xray read the panel config directly, so no copy is needed.
 
 # ---------------------------------------------------------------------
 # Web panel (3x-ui style, HTTPS :2053 with the domain certificate)
