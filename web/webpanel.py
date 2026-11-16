@@ -547,6 +547,31 @@ def page_services(csrf, flash=""):
                   flash)
 
 
+def panel_version():
+    try:
+        with open(os.path.join(BASE, "version")) as f:
+            return f.read().split()[0][:7] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def panel_update_state():
+    """Last self-update status dict (or None) + tail of the update log."""
+    status = None
+    try:
+        with open(os.path.join(BASE, "update-status.json")) as f:
+            status = json.load(f)
+    except Exception:
+        pass
+    tail = ""
+    try:
+        with open(os.path.join(BASE, "update.log")) as f:
+            tail = "".join(f.readlines()[-25:])
+    except Exception:
+        pass
+    return status, tail
+
+
 def page_settings(csrf, flash=""):
     cfg = load_web_cfg()
     body = f"""<div class="card" style="max-width:520px">
@@ -563,6 +588,33 @@ Port: <b>{esc(cfg.get('port', DEFAULT_PORT))}</b></p>
 <input name="newuser" style="width:100%;margin:5px 0 16px"
 value="{esc(cfg['username'])}">
 <button class="btn" type="submit">Save</button></form></div>"""
+    status, tail = panel_update_state()
+    last = ""
+    if status:
+        last = (f"<p style=\"margin:10px 0\">Last update run: "
+                f"<b>{esc(status.get('state', '-'))}</b> - "
+                f"{esc(status.get('message', ''))}<br>"
+                f"<span style=\"color:#94a3b8\">{esc(status.get('time', ''))}"
+                f"</span></p>")
+    log_html = ""
+    if tail:
+        log_html = (f"<div style=\"white-space:pre-wrap;word-break:break-all;"
+                    f"font-family:monospace;font-size:11px;color:#94a3b8;"
+                    f"max-height:220px;overflow:auto;margin-top:10px\">"
+                    f"{esc(tail)}</div>")
+    body += f"""<div class="card" style="max-width:520px;margin-top:16px">
+<form method="post" action="{U('/settings/update')}">
+<input type="hidden" name="csrf" value="{csrf}">
+<div class="k">Panel update</div>
+<p style="margin:10px 0">Installed version: <b>{esc(panel_version())}</b></p>
+{last}
+<p style="margin:10px 0;color:#94a3b8">Downloads the latest panel from
+GitHub and installs it in the background. Users, settings, certificates
+and SlowDNS keys are kept, and a backup of the current state is saved
+first. The panel restarts during the update - refresh after a minute.
+If the panel is already up to date, nothing changes.</p>
+<button class="btn" type="submit">Update panel now</button></form>
+{log_html}</div>"""
     return layout("Settings", "settings", body, flash)
 
 
@@ -804,6 +856,23 @@ class Handler(BaseHTTPRequestHandler):
             set_password(newuser, form["new"])
             return self._redirect(
                 U("/login"), "ragnar_session=; Max-Age=0; Path=/; HttpOnly")
+        if path == "/settings/update":
+            script = os.path.join(BASE, "core", "update.sh")
+            started = False
+            if shutil.which("systemd-run"):
+                r = subprocess.run(["systemd-run", "--unit=ragnar-update",
+                                    "--collect", "/bin/bash", script],
+                                   capture_output=True)
+                started = r.returncode == 0
+            if not started:
+                # Fallback: fully detached; update.sh flock keeps it single.
+                logf = open(os.path.join(BASE, "update.log"), "ab")
+                subprocess.Popen(["/bin/bash", script], stdout=logf,
+                                 stderr=logf, start_new_session=True)
+            return self._redirect(
+                U("/settings") + "?msg=" + urllib.parse.quote(
+                    "Update started - it runs in the background and the "
+                    "panel restarts during it. Refresh in a minute."))
         self._send(404, "Not found")
 
 

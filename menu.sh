@@ -131,9 +131,10 @@ main_menu() {
     opt 8 "STATUS"
     opt 9 "TOOLS"
     echo -e "${P}${B}   SYSTEM${N}"
-    opt 10 "CLEAR RAM"
-    opt 11 "REBOOT VPS"
-    opt 12 "UNINSTALL"
+    opt 10 "UPDATE PANEL"
+    opt 11 "CLEAR RAM"
+    opt 12 "REBOOT VPS"
+    opt 13 "UNINSTALL"
     opt x "EXIT"
     echo -e "${DIM}   Panel by @farisbazed - https://t.me/ragnaresim${N}"
 }
@@ -486,6 +487,23 @@ tools_menu() {
         esac
     done
 }
+update_panel() {
+    print_header; bar "UPDATE PANEL"
+    echo -e "${W}The panel updates itself from GitHub (main branch).${N}"
+    echo -e "${W}Users, settings, certificates and SlowDNS keys are kept;${N}"
+    echo -e "${W}a backup of the current state is saved to /root first.${N}"
+    echo
+    bash "$RAGNAR_DIR/core/update.sh" check || { pause; return; }
+    echo
+    read -rp "Update the panel now? [y/N] " a
+    if [ "$a" = y ]; then
+        if bash "$RAGNAR_DIR/core/update.sh"; then
+            echo; echo "Reloading the menu with the new version..."
+            sleep 1; exec bash "$RAGNAR_DIR/menu.sh"
+        fi
+    fi
+    pause
+}
 status_page() {
     print_header; bar "STATUS"
     for s in haproxy xray sing-box ragnar-wsproxy dropbear ssh zivpn udp-custom \
@@ -515,9 +533,10 @@ while true; do
         7) webpanel_menu ;;
         8) status_page ;;
         9) tools_menu ;;
-        10) sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; echo "RAM cleared"; pause ;;
-        11) read -rp "Reboot the VPS now? [y/N] " a; [ "$a" = y ] && reboot ;;
-        12) read -rp "UNINSTALL Ragnar Panel completely? [y/N] " a
+        10) update_panel ;;
+        11) sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; echo "RAM cleared"; pause ;;
+        12) read -rp "Reboot the VPS now? [y/N] " a; [ "$a" = y ] && reboot ;;
+        13) read -rp "UNINSTALL Ragnar Panel completely? [y/N] " a
             [ "$a" = y ] && bash "$RAGNAR_DIR/uninstall.sh" ;;
         x|X) clear; echo "Bye - @farisbazed / https://t.me/ragnaresim"; exit 0 ;;
     esac

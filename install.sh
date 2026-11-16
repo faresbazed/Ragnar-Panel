@@ -98,11 +98,17 @@ install -m 755 "$SRC/core/checker.py"  "$BASE/core/checker.py"
 install -m 755 "$SRC/core/wsproxy.py"  "$BASE/core/wsproxy.py"
 install -m 755 "$SRC/core/watchdog.sh" "$BASE/core/watchdog.sh"
 install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
+install -m 755 "$SRC/core/update.sh"   "$BASE/core/update.sh"
 install -m 755 "$SRC/menu.sh"          "$BASE/menu.sh"
 install -m 755 "$SRC/uninstall.sh"     "$BASE/uninstall.sh"
 install -m 755 "$SRC/web/webpanel.py"  "$BASE/web/webpanel.py"
 ln -sf "$BASE/menu.sh" /usr/local/bin/menu
 ln -sf "$BASE/menu.sh" /usr/local/bin/ragnar
+# Record the installed code version (used by the self-update check).
+if git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
+    printf '%s %s\n' "$(git -C "$SRC" rev-parse HEAD)" "$(date -Is)" \
+        > "$BASE/version"
+fi
 echo "$PUBIP" > "$BASE/host"
 [ -n "$DOMAIN" ] && echo "$DOMAIN" > "$BASE/domain"
 python3 - "$DOMAIN" "$NS" <<'PY'

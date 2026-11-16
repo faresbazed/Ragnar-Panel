@@ -33,7 +33,23 @@ Then open the panel any time with:
 menu        # or: ragnar
 ```
 
-Uninstall from the menu (option **16**) or `sudo bash /etc/ragnar/uninstall.sh`.
+Uninstall from the menu (option **13**) or `sudo bash /etc/ragnar/uninstall.sh`.
+
+## Updating
+
+The panel updates itself from GitHub — no re-clone needed:
+
+- **Terminal menu:** option **10 · UPDATE PANEL**
+- **Web panel:** Settings → **Update panel now**
+- **Script:** `sudo bash /etc/ragnar/core/update.sh`
+  (`check` prints installed vs latest, `--force` skips the version check)
+
+An update downloads the latest `main`, backs up the whole panel state to
+`/root/ragnar-backup-pre-update-<date>.tar.gz`, then re-runs the installer.
+Users, settings, certificates and SlowDNS keys are preserved; only code is
+replaced and services are restarted. The installed version is recorded in
+`/etc/ragnar/version`, the last run in `/etc/ragnar/update-status.json`
+(full log: `/etc/ragnar/update.log`).
 
 ## The port-sharing solution
 
