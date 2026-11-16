@@ -20,7 +20,7 @@ die()  { echo -e "\033[91m[RAGNAR] $*\033[0m"; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "Run as root: sudo bash install.sh"
 . /etc/os-release 2>/dev/null || die "Cannot read /etc/os-release"
-case " $ID $ID_LIKE " in
+case " $ID ${ID_LIKE:-} " in
     *ubuntu*|*debian*) : ;;
     *) warn "Tested on Ubuntu/Debian - continuing anyway" ;;
 esac
