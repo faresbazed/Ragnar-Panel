@@ -213,6 +213,34 @@ def server_info():
 # ---------------------------------------------------------------------
 # HTML (3x-ui style: dark sidebar, cards, clean tables)
 # ---------------------------------------------------------------------
+ICONS = {
+    "dashboard": '<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/>',
+    "ssh": '<path d="M8 15a5 5 0 1 1 3.9-1.9L21 22"/><path d="m18 19 2-2M15 16l2-2"/><circle cx="8" cy="10" r="1"/>',
+    "xray": '<path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3Z"/><path d="m19 14 1.1 2.1L22 17l-1.9.9L19 20l-.9-2.1L16 17l2.1-.9L19 14Z"/>',
+    "zivpn": '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
+    "services": '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/>',
+    "settings": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M2 14h4M10 8h4M18 16h4"/>',
+    "logout": '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
+    "server": '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 8h6M11 17h6"/>',
+    "ip": '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>',
+    "uptime": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    "disk": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14h18M7 17h.01M11 17h.01M15 8h2"/>',
+    "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+    "online": '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+    "bandwidth": '<path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 6-7"/><path d="M17 6h4v4"/>',
+    "plus": '<path d="M12 5v14M5 12h14"/>',
+}
+
+
+def icon(name, cls="icon"):
+    """Return a small, decorative inline SVG from the fixed icon set."""
+    paths = ICONS.get(name, ICONS["server"])
+    return (f'<svg class="{cls}" viewBox="0 0 24 24" fill="none" '
+            f'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true" focusable="false">'
+            f'{paths}</svg>')
+
+
 CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a;
@@ -304,23 +332,152 @@ h3 { margin: 20px 0 8px; font-size: 15px; color: #c4b5fd; }
 """
 
 
+CSS += """
+:root { color-scheme: dark; }
+body { background: radial-gradient(ellipse at 72% -20%, #192748 0, #0b1120 58%);
+       line-height: 1.5; }
+.sidebar { width: 248px; min-height: 100vh; position: sticky; top: 0;
+           display: flex; flex-direction: column; padding: 22px 14px;
+           background: rgba(13, 22, 41, .96); border-right: 1px solid #25324a; }
+.logo { display: flex; align-items: center; gap: 12px; padding: 0 10px 26px;
+        color: #f8fafc; letter-spacing: .06em; }
+.logo small { color: #8593ad; letter-spacing: 0; line-height: 1.4; }
+.logo-badge { display: grid; place-items: center; width: 40px; height: 40px;
+              flex: 0 0 40px; color: #c4b5fd; border: 1px solid #55429a;
+              border-radius: 13px; background: linear-gradient(145deg, #35266c, #1c2540); }
+.logo-icon { width: 21px; height: 21px; }
+.nav { display: grid; gap: 5px; }
+.nav a { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+         color: #9ba9c1; border: 0; border-radius: 10px; transition: .16s ease; }
+.nav a:hover { color: #f8fafc; background: #1a2740; }
+.nav a.on { color: #fff; background: linear-gradient(100deg, #35266c, #252d4b);
+            box-shadow: inset 3px 0 #a78bfa; }
+.nav a:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible,
+.link-box button:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+.nav-icon { width: 18px; height: 18px; flex: 0 0 18px; opacity: .9; }
+.sidebar-footer { display: flex; align-items: center; gap: 9px; margin: auto 10px 2px;
+                  padding-top: 24px; color: #74829b; font-size: 12px; }
+.sidebar-dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399;
+               box-shadow: 0 0 12px #34d39980; }
+.main { width: calc(100% - 248px); max-width: 1480px; padding: 34px clamp(22px, 4vw, 58px); }
+.page-heading { display: flex; align-items: center; justify-content: space-between;
+                gap: 16px; margin-bottom: 24px; }
+.page-heading h1 { margin: 2px 0 0; font-size: clamp(22px, 2.2vw, 29px);
+                    letter-spacing: -.025em; }
+.eyebrow { color: #8b9ab4; font-size: 11px; font-weight: 700;
+           letter-spacing: .13em; text-transform: uppercase; }
+.page-mark { display: grid; place-items: center; width: 42px; height: 42px;
+             border: 1px solid #2e3d59; border-radius: 13px; color: #a78bfa;
+             background: #111c33; }
+.page-mark svg { width: 21px; height: 21px; }
+.cards { grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 15px;
+         margin-bottom: 28px; }
+.metric-card { min-width: 0; padding: 17px 18px; border-color: #2b3a55;
+               background: linear-gradient(145deg, rgba(28, 42, 67, .96), rgba(18, 29, 49, .96));
+               box-shadow: 0 8px 24px #03081430; transition: transform .16s, border-color .16s; }
+.metric-card:hover { transform: translateY(-2px); border-color: #586389; }
+.metric-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.metric-card .k { color: #a4b1c8; letter-spacing: .075em; }
+.metric-icon-wrap { display: grid; place-items: center; width: 34px; height: 34px;
+                    flex: 0 0 34px; color: #c4b5fd; border: 1px solid #473b72;
+                    border-radius: 10px; background: #30255a80; }
+.metric-icon { width: 18px; height: 18px; }
+.metric-card .v { margin-top: 12px; font-size: clamp(19px, 2vw, 24px);
+                   letter-spacing: -.025em; overflow-wrap: anywhere; }
+.metric-card .s { min-height: 18px; color: #8190aa; line-height: 1.45; }
+.section-heading { display: flex; align-items: center; justify-content: space-between;
+                   gap: 12px; margin: 4px 0 12px; }
+.section-heading h2 { margin: 2px 0 0; color: #e8edf7; font-size: 17px; }
+.health-summary { padding: 5px 10px; border: 1px solid #255943; border-radius: 99px;
+                  color: #8ce2b7; background: #10372b80; font-size: 12px; }
+table { border-color: #2b3a55; background: rgba(20, 31, 51, .92); }
+th { background: #17243b; color: #a7b4cb; }
+th, td { padding: 12px 14px; border-bottom-color: #273650; }
+tbody tr:hover { background: #ffffff06; }
+.tblwrap { border: 1px solid #2b3a55; }
+.tblwrap table { border: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+       min-height: 34px; padding: 7px 13px; font-weight: 600;
+       background: linear-gradient(135deg, #7c3aed, #6841c7); transition: .16s ease; }
+.btn:hover { background: linear-gradient(135deg, #8b5cf6, #7755d6); transform: translateY(-1px); }
+.button-icon { width: 15px; height: 15px; }
+.btn.sm { min-height: 28px; }
+.btn.grey { background: #293750; }
+.btn.grey:hover { background: #384963; }
+.btn.red { background: #8f2934; }
+.btn.red:hover { background: #ae3442; }
+input, select { border-color: #354561; }
+input:focus, select:focus { border-color: #8b72dd; box-shadow: 0 0 0 3px #8b5cf626; }
+.addform, .editform, .login-card { border-color: #2b3a55;
+       background: linear-gradient(145deg, #1b2942, #151f34); }
+.addform { box-shadow: 0 8px 24px #03081420; }
+.addform label { color: #a8b5cb; }
+.msg { border: 1px solid #2e7752; background: #123e2c; }
+.msg.err { border-color: #853a42; background: #451c24; }
+.skip-link { position: fixed; z-index: 10; top: 10px; left: 10px; padding: 8px 12px;
+             transform: translateY(-150%); border-radius: 8px; color: #fff;
+             background: #6d45cf; }
+.skip-link:focus { transform: translateY(0); }
+.login-wrap { width: 400px; }
+.login-card { box-shadow: 0 24px 70px #03081475; }
+.login-brand { display: flex; justify-content: center; align-items: center; gap: 11px;
+               margin-bottom: 5px; }
+.login-brand .logo-badge { width: 36px; height: 36px; flex-basis: 36px; }
+.login-brand .logo-icon { width: 19px; height: 19px; }
+.login-card h1 { margin: 0; }
+@media (max-width: 880px) {
+  .sidebar { position: relative; min-height: auto; width: 100%; padding: 12px 12px 0;
+             border-right: 0; }
+  .logo { padding: 0 4px 12px; }
+  .logo-badge { width: 36px; height: 36px; flex-basis: 36px; }
+  .nav { display: flex; gap: 3px; overflow-x: auto; padding: 0 0 10px;
+         scrollbar-width: thin; }
+  .nav a { flex: 0 0 auto; gap: 8px; padding: 8px 10px; }
+  .nav a.on { box-shadow: inset 0 -3px #a78bfa; }
+  .sidebar-footer { display: none; }
+  .main { width: 100%; max-width: none; padding: 24px 18px; }
+}
+@media (max-width: 560px) {
+  .main { padding: 20px 14px; }
+  .page-heading { margin-bottom: 18px; }
+  .page-mark { width: 38px; height: 38px; }
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .metric-card { padding: 13px; border-radius: 9px; }
+  .metric-card .v { font-size: 19px; }
+  .metric-icon-wrap { width: 30px; height: 30px; flex-basis: 30px; }
+  .metric-icon { width: 16px; height: 16px; }
+  .nav-icon { width: 16px; height: 16px; flex-basis: 16px; }
+  .nav a { padding: 8px 9px; font-size: 13px; }
+  .health-summary { font-size: 11px; }
+}
+"""
+
+
 def layout(title, active, body, flash=""):
-    nav = [(U("/"), "dashboard", "Dashboard"), (U("/ssh"), "ssh", "SSH & SSL"),
-           (U("/xray"), "xray", "Xray"), (U("/zivpn"), "zivpn", "ZIVPN"),
-           (U("/services"), "services", "Services"),
-           (U("/settings"), "settings", "Settings"),
-           (U("/logout"), "", "Logout")]
+    nav = [(U("/"), "dashboard", "Dashboard", "dashboard"),
+           (U("/ssh"), "ssh", "SSH & SSL", "ssh"),
+           (U("/xray"), "xray", "Xray", "xray"),
+           (U("/zivpn"), "zivpn", "ZIVPN", "zivpn"),
+           (U("/services"), "services", "Services", "services"),
+           (U("/settings"), "settings", "Settings", "settings"),
+           (U("/logout"), "", "Logout", "logout")]
     links = "".join(
-        f'<a href="{href}" class="{"on" if key == active else ""}">'
-        f'<span>{label}</span></a>' for href, key, label in nav)
+        f'<a href="{href}" class="nav-link {"on" if key == active else ""}"'
+        f'{" aria-current=\"page\"" if key == active else ""}>'
+        f'{icon(icon_name, "nav-icon")}<span>{label}</span></a>'
+        for href, key, label, icon_name in nav)
     msg = f'<div class="msg">{esc(flash)}</div>' if flash else ""
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)} - Ragnar Panel</title><style>{CSS}</style></head>
-<body><div class="sidebar"><div class="logo">RAGNAR<small>
-VPS Management Panel<br>by @farisbazed</small></div>
-<div class="nav">{links}</div></div>
-<div class="main"><h1>{esc(title)}</h1>{msg}{body}</div></body></html>"""
+<body><a class="skip-link" href="#main">Skip to content</a>
+<aside class="sidebar"><div class="logo"><span class="logo-badge">{icon("server", "logo-icon")}</span>
+<span>RAGNAR<small>VPS Management Panel<br>by @farisbazed</small></span></div>
+<nav class="nav" aria-label="Primary navigation">{links}</nav>
+<div class="sidebar-footer"><span class="sidebar-dot"></span><span>Panel ready</span></div></aside>
+<main class="main" id="main"><header class="page-heading"><div>
+<div class="eyebrow">Ragnar VPS Panel</div><h1>{esc(title)}</h1></div>
+<div class="page-mark">{icon("server")}</div></header>{msg}{body}</main></body></html>"""
 
 
 def login_page(error=""):
@@ -329,7 +486,8 @@ def login_page(error=""):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Login - Ragnar Panel</title><style>{CSS}</style></head>
 <body><div class="login-wrap"><div class="login-card">
-<h1>RAGNAR</h1><p>VPS Management Panel</p>{err}
+<div class="login-brand"><span class="logo-badge">{icon("server", "logo-icon")}</span>
+<h1>RAGNAR</h1></div><p>VPS Management Panel</p>{err}
 <form method="post" action="{U('/login')}">
 <label>Username</label><input name="username" autocomplete="username" required>
 <label>Password</label><input name="password" type="password"
@@ -387,7 +545,7 @@ def add_user_form(kind, csrf):
 <input type="hidden" name="csrf" value="{csrf}">
 <div><label>Username</label><input name="user" required></div>{pw}{uuid_field}
 <div><label>Days</label><input name="days" type="number" value="30" min="1"></div>
-{quota}<button class="btn" name="op" value="create" type="submit">+ Create user</button>
+{quota}<button class="btn" name="op" value="create" type="submit">{icon("plus", "button-icon")}Create user</button>
 </form>"""
 
 
@@ -400,28 +558,35 @@ def page_dashboard(csrf, flash=""):
     today = bw.get("today") or {}
     month = bw.get("month") or {}
     cards = [
-        ("Server IP", info["ip"], info["os"]),
-        ("Uptime", info["uptime"], f"RAM {info['ram']}"),
-        ("Disk", info["disk"], ""),
+        ("Server IP", info["ip"], info["os"], "ip"),
+        ("Uptime", info["uptime"], f"RAM {info['ram']}", "uptime"),
+        ("Disk", info["disk"], "Used / total", "disk"),
         ("Users", str(stats.get("total", 0)),
          f"SSH {stats.get('ssh', 0)} - Xray {stats.get('vless', 0)} - "
-         f"ZIVPN {stats.get('zivpn', 0)}"),
-        ("Online now", str(online.get("online", 0)), "SSH sessions + active Xray"),
-        ("Bandwidth today", today.get("total_f", "n/a"), ""),
-        ("Bandwidth month", month.get("total_f", "n/a"), ""),
+         f"ZIVPN {stats.get('zivpn', 0)}", "users"),
+        ("Online now", str(online.get("online", 0)), "SSH sessions + active Xray", "online"),
+        ("Bandwidth today", today.get("total_f", "n/a"), "", "bandwidth"),
+        ("Bandwidth month", month.get("total_f", "n/a"), "", "bandwidth"),
     ]
     card_html = "".join(
-        f'<div class="card"><div class="k">{esc(k)}</div>'
-        f'<div class="v">{esc(v)}</div><div class="s">{esc(s)}</div></div>'
-        for k, v, s in cards)
+        f'<section class="card metric-card"><div class="metric-head">'
+        f'<div class="k">{esc(k)}</div><span class="metric-icon-wrap">'
+        f'{icon(icon_name, "metric-icon")}</span></div>'
+        f'<div class="v">{esc(v)}</div><div class="s">{esc(s)}</div></section>'
+        for k, v, s, icon_name in cards)
+    service_states = [(service, svc_active(service)) for service in SERVICES]
+    online_services = sum(is_up for _, is_up in service_states)
     svc = "".join(
         f'<tr><td>{esc(s)}</td><td><span class="dot '
-        f'{"on-dot" if svc_active(s) else "off-dot"}"></span>'
-        f'{"ONLINE" if svc_active(s) else "OFFLINE"}</td></tr>'
-        for s in SERVICES)
+        f'{"on-dot" if is_up else "off-dot"}"></span>'
+        f'{"ONLINE" if is_up else "OFFLINE"}</td></tr>'
+        for s, is_up in service_states)
     return layout("Dashboard", "dashboard",
                   f'<div class="cards">{card_html}</div>'
-                  f'<h3>Services</h3><div class="tblwrap">'
+                  f'<div class="section-heading"><div><div class="eyebrow">Health</div>'
+                  f'<h2>Service status</h2></div>'
+                  f'<span class="health-summary">{online_services} of '
+                  f'{len(service_states)} online</span></div><div class="tblwrap">'
                   f"<table>{svc}</table></div>", flash)
 
 
