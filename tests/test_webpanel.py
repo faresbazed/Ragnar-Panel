@@ -102,6 +102,28 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
         links = op.open(BASE_URL + "/xray/links?u=xuser").read().decode()
         self.assertIn("vless://", links)
         self.assertIn("anytls://", links)
+        xray_page = op.open(BASE_URL + "/xray").read().decode()
+        self.assertIn('name="uuid"', xray_page)
+        self.assertIn("Auto-generated if blank", xray_page)
+
+    def test_custom_uuid_xray_create_action(self):
+        custom_uuid = "123e4567-e89b-42d3-a456-426614174000"
+        code = f"""
+import sys
+sys.path[:0] = ['core', 'web']
+import ragnar, webpanel
+webpanel.ragnar.apply_configs = lambda: None
+msg = webpanel.do_user_action('xray', {{
+    'op': 'create', 'user': 'custom-web', 'days': '30',
+    'quota': '0', 'iplimit': '0', 'uuid': '{custom_uuid}'
+}})
+assert msg == "User 'custom-web' created.", msg
+assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
+"""
+        env = dict(os.environ, RAGNAR_DIR=self.tmp)
+        result = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_edit_flows(self):
         import urllib.parse

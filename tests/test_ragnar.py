@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Local tests for the Ragnar core - no root, no VPS, no network needed."""
 import base64
+import contextlib
+import io
 import json
 import os
 import struct
 import subprocess
 import sys
 import tempfile
+import unittest
 
 TMP = tempfile.mkdtemp(prefix="ragnar-test-")
 os.environ["RAGNAR_DIR"] = TMP
@@ -15,7 +18,9 @@ os.environ["RAGNAR_DOMAIN"] = "vpn.example.com"
 os.environ["RAGNAR_CF_HOST"] = "cdn.example.com"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "core"))
+sys.modules.pop("ragnar", None)
 import ragnar  # noqa: E402
+R = ragnar
 
 failures = []
 def _raises(fn):
@@ -45,6 +50,12 @@ check("ssh info ports", info["ws_port"] == 80 and info["wss_port"] == 443
 
 # Xray users -----------------------------------------------------------
 x = ragnar.xray_add("bob", 30, 100, 3)
+check("xray UUID defaults to generated RFC 4122 v4",
+      ragnar._uuid.UUID(x["uuid"]).version == 4
+      and ragnar._uuid.UUID(x["uuid"]).variant == ragnar._uuid.RFC_4122)
+custom_uuid = "123e4567-e89b-42d3-a456-426614174000"
+custom = ragnar.xray_add("zoe", 30, 0, 0, custom_uuid.upper())
+check("xray custom UUID stored canonically", custom["uuid"] == custom_uuid)
 cfg = ragnar.gen_xray_config()
 protos = {i["protocol"] for i in cfg["inbounds"]}
 check("xray protocols together", {"vless", "vmess", "trojan", "shadowsocks"} <= protos,
@@ -54,6 +65,19 @@ check("xray backends loopback only",
       all(i["listen"] == "127.0.0.1" for i in cfg["inbounds"]))
 emails = [c.get("email") for i in cfg["inbounds"] for c in i["settings"].get("clients", [])]
 check("xray user in every protocol", emails.count("bob") == 4, str(emails))
+custom_ids = [c.get("id") for i in cfg["inbounds"]
+              for c in i["settings"].get("clients", [])]
+check("xray custom UUID reaches VLESS and VMess configs",
+      custom_ids.count(custom_uuid) == 2, str(custom_ids))
+check("xray custom UUID appears in generated links",
+      custom_uuid in json.dumps(ragnar.links_for("zoe")))
+check("xray rejects malformed UUID without creating user",
+      _raises(lambda: ragnar.xray_add("bad-uuid", 30, custom_uuid="not-a-uuid"))
+      and "bad-uuid" not in ragnar.load_xray())
+check("xray rejects UUID already assigned to another user",
+      _raises(lambda: ragnar.xray_add("duplicate-uuid", 30,
+                                      custom_uuid=custom_uuid))
+      and "duplicate-uuid" not in ragnar.load_xray())
 
 sb = ragnar.gen_singbox_config()
 check("sing-box anytls inbound", sb["inbounds"][0]["type"] == "anytls"
@@ -98,8 +122,19 @@ plan = ragnar.enforcement_plan(
 check("expiry plan locks ssh", plan and plan[0]["action"] == "lock")
 
 st = ragnar.stats()
-check("stats counts", st["ssh"] == 1 and st["vless"] == 1 and st["zivpn"] == 1
-      and st["total"] == 3, str(st))
+check("stats counts", st["ssh"] == 1 and st["vless"] == 2 and st["zivpn"] == 1
+      and st["total"] == 4, str(st))
+
+_cli_uuid = "123e4567-e89b-42d3-b456-426614174000"
+_apply_configs = ragnar.apply_configs
+ragnar.apply_configs = lambda: None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        _cli_rc = ragnar.main(["xray-add", "cli-user", "30", "0", "0", _cli_uuid])
+finally:
+    ragnar.apply_configs = _apply_configs
+check("xray CLI accepts optional UUID", _cli_rc == 0
+      and ragnar.load_xray()["cli-user"]["uuid"] == _cli_uuid)
 
 # ONLINE counter: real users, not socket counts -------------------------
 _sample_ss = (
@@ -214,3 +249,7 @@ class TestBorderedTables(unittest.TestCase):
         self.assertEqual(R._fmt_bytes_short(0), "0B")
         self.assertEqual(R._fmt_bytes_short(28 * 1024), "28K")
         self.assertEqual(R._fmt_bytes_short(int(1.13 * 1024 ** 3)), "1.13G")
+
+
+if __name__ == "__main__":
+    unittest.main()

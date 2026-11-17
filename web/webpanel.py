@@ -375,6 +375,9 @@ def user_table(rows, kind, csrf):
 def add_user_form(kind, csrf):
     pw = ('<div><label>Password</label><input name="password" required></div>'
           if kind in ("ssh", "zivpn") else "")
+    uuid_field = ('<div><label>Custom UUID (VLESS/VMess, optional)</label>'
+                  '<input name="uuid" placeholder="Auto-generated if blank" '
+                  'autocomplete="off"></div>' if kind == "xray" else "")
     quota = ('<div><label>Quota GB (0 = unlimited)</label>'
              '<input name="quota" type="number" value="0" min="0"></div>'
              '<div><label>IP limit (0 = unlimited)</label>'
@@ -382,7 +385,7 @@ def add_user_form(kind, csrf):
              if kind in ("ssh", "xray") else "")
     return f"""<form class="addform" method="post" action="{U('/' + kind + '/action')}">
 <input type="hidden" name="csrf" value="{csrf}">
-<div><label>Username</label><input name="user" required></div>{pw}
+<div><label>Username</label><input name="user" required></div>{pw}{uuid_field}
 <div><label>Days</label><input name="days" type="number" value="30" min="1"></div>
 {quota}<button class="btn" name="op" value="create" type="submit">+ Create user</button>
 </form>"""
@@ -635,7 +638,8 @@ def do_user_action(kind, form):
                 ragnar.sync_linux_user(user, u["password"], u["expiry"], True)
             elif kind == "xray":
                 ragnar.xray_add(user, days, float(form.get("quota", 0)),
-                                int(form.get("iplimit", 0)))
+                                int(form.get("iplimit", 0)),
+                                form.get("uuid", ""))
                 ragnar.apply_configs()
             elif kind == "zivpn":
                 ragnar.zivpn_add(user, form.get("password", ""), days)
