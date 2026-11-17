@@ -80,6 +80,7 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
         # dashboard redirects to login when unauthenticated
         page = op.open(BASE_URL + "/login").read().decode()
         self.assertIn("RAGNAR", page)
+        self.assertIn('class="login-split"', page)
         # wrong password rejected
         bad = urllib.parse.urlencode(
             {"username": "admin", "password": "nope"}).encode()
@@ -90,6 +91,9 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
         self.login(op)
         dash = op.open(BASE_URL + "/").read().decode()
         self.assertIn("Dashboard", dash)
+        self.assertIn('class="topbar"', dash)
+        self.assertIn('id="theme-toggle"', dash)
+        self.assertIn('class="node-strip"', dash)
         self.assertIn('class="nav-icon"', dash)
         self.assertIn('aria-current="page"', dash)
         self.assertIn('class="metric-icon"', dash)

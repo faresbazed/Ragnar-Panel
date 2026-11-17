@@ -321,11 +321,12 @@ def api_status_payload():
 
 
 # ---------------------------------------------------------------------
-# Icons & Token-Driven Vanilla CSS Design System
+# Icons & Nordic Forge Design System (Obsidian Dark + Alabaster Light)
 # ---------------------------------------------------------------------
 ICONS = {
+    "brand": '<polygon points="12 2 21 7 21 17 12 22 3 17 3 7"/><path d="M12 22V12M21 7l-9 5-9-5"/><circle cx="12" cy="12" r="2"/>',
     "dashboard": '<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/>',
-    "ssh": '<path d="M8 15a5 5 0 1 1 3.9-1.9L21 22"/><path d="m18 19 2-2M15 16l2-2"/><circle cx="8" cy="10" r="1"/>',
+    "ssh": '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
     "xray": '<path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z"/>',
     "zivpn": '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
     "services": '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/>',
@@ -345,14 +346,26 @@ ICONS = {
     "refresh": '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
     "check": '<path d="m5 12 5 5L20 7"/>',
     "alert": '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
 }
+
+FONTS_HEAD = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600'
+    '&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">'
+    "<script>(function(){try{var t=localStorage.getItem('ragnar-theme');"
+    "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);"
+    "}catch(e){}})();</script>"
+)
 
 
 def icon(name, cls="icon"):
     paths = ICONS.get(name, ICONS["server"])
     return (
         f'<svg class="{cls}" viewBox="0 0 24 24" fill="none" '
-        f'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+        f'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" '
         f'stroke-linejoin="round" aria-hidden="true" focusable="false">'
         f'{paths}</svg>'
     )
@@ -361,207 +374,378 @@ def icon(name, cls="icon"):
 CSS = """
 :root {
   color-scheme: dark;
-  --bg: #090d16;
-  --bg-elev: #0f1624;
-  --surface: #121b2c;
-  --surface-2: #172237;
-  --surface-hover: #1b2840;
-  --border: #233149;
-  --border-strong: #314463;
-  --text: #eef2f8;
-  --text-muted: #93a3bc;
-  --text-dim: #667691;
-  --accent: #0ea5e9;
-  --accent-hover: #38bdf8;
-  --accent-soft: rgba(14, 165, 233, 0.14);
-  --ok: #10b981;
-  --ok-bg: rgba(16, 185, 129, 0.14);
-  --ok-text: #6ee7b7;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #0e0d0b;
+  --bg-wash: rgba(229, 153, 52, 0.075);
+  --topbar-bg: rgba(16, 15, 13, 0.84);
+  --surface: #161412;
+  --surface-2: #1e1b18;
+  --surface-3: #27231e;
+  --surface-inset: #11100e;
+  --border: rgba(255, 246, 232, 0.085);
+  --border-strong: rgba(255, 246, 232, 0.155);
+  --specular: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+
+  --text: #f5f2eb;
+  --text-muted: #a69e93;
+  --text-dim: #736b61;
+
+  --accent: #e59934;
+  --accent-hover: #f0ab4d;
+  --accent-ink: #171108;
+  --accent-soft: rgba(229, 153, 52, 0.14);
+  --accent-text: #f3b562;
+
+  --ok: #22c55e;
+  --ok-bg: rgba(34, 197, 94, 0.13);
+  --ok-text: #86efac;
+
   --warn: #f59e0b;
   --warn-bg: rgba(245, 158, 11, 0.15);
   --warn-text: #fcd34d;
+
   --danger: #ef4444;
-  --danger-bg: rgba(239, 68, 68, 0.15);
+  --danger-bg: rgba(239, 68, 68, 0.14);
   --danger-text: #fca5a5;
-  --info-bg: rgba(14, 165, 233, 0.14);
-  --info-text: #7dd3fc;
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 16px;
-  --shadow: 0 12px 32px rgba(2, 6, 16, 0.42);
+
+  --info-bg: rgba(229, 153, 52, 0.13);
+  --info-text: #f3b562;
+
+  --radius-xs: 7px;
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.24);
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
 }
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f2ec;
+  --bg-wash: rgba(198, 120, 20, 0.07);
+  --topbar-bg: rgba(249, 247, 242, 0.88);
+  --surface: #ffffff;
+  --surface-2: #f8f5ef;
+  --surface-3: #ede8df;
+  --surface-inset: #f3efe8;
+  --border: rgba(30, 24, 16, 0.09);
+  --border-strong: rgba(30, 24, 16, 0.17);
+  --specular: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+  --text: #181512;
+  --text-muted: #5e574e;
+  --text-dim: #8a8177;
+
+  --accent: #c47615;
+  --accent-hover: #ad650d;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(196, 118, 21, 0.11);
+  --accent-text: #9e5b08;
+
+  --ok: #16a34a;
+  --ok-bg: rgba(22, 163, 74, 0.11);
+  --ok-text: #15803d;
+
+  --warn: #d97706;
+  --warn-bg: rgba(217, 119, 6, 0.12);
+  --warn-text: #b45309;
+
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.10);
+  --danger-text: #b91c1c;
+
+  --info-bg: rgba(196, 118, 21, 0.11);
+  --info-text: #9e5b08;
+
+  --shadow-sm: 0 2px 10px rgba(24, 18, 10, 0.05);
+  --shadow: 0 14px 34px rgba(24, 18, 10, 0.07);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { min-height: 100%; }
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: radial-gradient(ellipse 90% 50% at 65% -10%, #132238 0%, var(--bg) 62%);
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  background-image: radial-gradient(ellipse 95% 420px at 50% -110px, var(--bg-wash), transparent 70%);
+  background-repeat: no-repeat;
   color: var(--text);
-  display: flex;
   min-height: 100vh;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-.tabular, .v, td, .health-summary, .pill { font-variant-numeric: tabular-nums; }
-
-/* Sidebar */
-.sidebar {
-  width: 252px;
-  min-height: 100vh;
-  position: sticky;
-  top: 0;
   display: flex;
   flex-direction: column;
-  padding: 22px 14px;
-  flex-shrink: 0;
-  background: rgba(11, 17, 29, 0.96);
-  border-right: 1px solid var(--border);
-  backdrop-filter: blur(12px);
-}
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 2px 10px 24px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.05em;
-}
-.logo small {
-  display: block;
-  font-size: 11.5px;
-  color: var(--text-dim);
-  font-weight: 400;
-  letter-spacing: 0;
-  line-height: 1.35;
-  margin-top: 2px;
-}
-.logo-badge {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  color: var(--accent-hover);
-  border: 1px solid var(--border-strong);
-  border-radius: 11px;
-  background: linear-gradient(150deg, #162944, #0f1829);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-}
-.logo-icon { width: 20px; height: 20px; }
-.nav { display: grid; gap: 4px; }
-.nav a {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 10px 12px;
-  color: var(--text-muted);
-  text-decoration: none;
-  font-size: 13.5px;
-  font-weight: 500;
-  border-radius: 9px;
-  transition: background 0.14s ease, color 0.14s ease;
-}
-.nav a:hover { color: var(--text); background: var(--surface); }
-.nav a.on {
-  color: #fff;
-  background: var(--surface-2);
-  box-shadow: inset 3px 0 0 var(--accent-hover);
-}
-.nav-icon { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.9; }
-.nav a.on .nav-icon { color: var(--accent-hover); opacity: 1; }
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: auto 10px 2px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(35, 49, 73, 0.55);
-  color: var(--text-dim);
-  font-size: 12px;
-}
-.sidebar-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 10px rgba(16, 185, 129, 0.55);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Main Content */
-.main {
-  flex: 1;
-  width: calc(100% - 252px);
-  max-width: 1460px;
-  padding: 32px clamp(20px, 3.8vw, 52px);
+.mono, .v, .pill, .health-summary, td.num {
+  font-variant-numeric: tabular-nums;
 }
-.page-heading {
+
+/* Top Floating Command Header */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--topbar-bg);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-inner {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 12px clamp(16px, 3vw, 40px);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 24px;
 }
-.page-heading h1 {
-  margin: 3px 0 0;
-  font-size: clamp(21px, 2.1vw, 27px);
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  text-decoration: none;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.logo-badge {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--accent);
+  box-shadow: var(--specular), var(--shadow-sm);
+}
+.logo-icon { width: 19px; height: 19px; }
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.brand-name {
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.025em;
+  letter-spacing: 0.08em;
 }
-.eyebrow {
-  color: var(--text-dim);
+.brand-sub {
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 500;
 }
-.heading-actions { display: flex; align-items: center; gap: 10px; }
-.live-chip {
+
+/* Segmented Pill Navigation Dock */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav::-webkit-scrollbar { display: none; }
+.nav a {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 11px;
-  border-radius: 99px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
+  padding: 7px 14px;
+  border-radius: 999px;
   color: var(--text-muted);
-  font-size: 12px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
-.page-mark {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  color: var(--accent-hover);
-  background: var(--bg-elev);
+.nav a:hover {
+  color: var(--text);
+  background: var(--surface-2);
 }
-.page-mark svg { width: 19px; height: 19px; }
+.nav a.on {
+  color: var(--text);
+  background: var(--surface-3);
+  box-shadow: var(--specular), 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.nav-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  opacity: 0.82;
+}
+.nav a.on .nav-icon {
+  color: var(--accent);
+  opacity: 1;
+}
 
-/* Metric Cards */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 14px;
-  margin-bottom: 28px;
+.topbar-utils {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.card {
-  background: linear-gradient(160deg, rgba(21, 31, 50, 0.95), rgba(14, 21, 35, 0.96));
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.icon-btn svg { width: 16px; height: 16px; }
+html[data-theme="light"] .theme-sun { display: none; }
+html:not([data-theme="light"]) .theme-moon { display: none; }
+
+.logout-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.logout-link:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+/* Main Workspace Container */
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 34px clamp(16px, 3vw, 40px) 64px;
+}
+
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 26px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.page-heading h1 {
+  font-size: clamp(23px, 2.3vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.page-sub {
+  margin-top: 5px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sync-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* Dashboard Node Overview Banner */
+.node-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), var(--shadow);
+  box-shadow: var(--specular), var(--shadow-sm);
+}
+.node-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+}
+.node-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.node-kv span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.node-kv strong {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.node-sep {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+}
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Metric Cards Grid */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(225px, 1fr));
+  gap: 14px;
+  margin-bottom: 32px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--specular), var(--shadow-sm);
 }
 .metric-card {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  justify-content: space-between;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 .metric-card:hover {
   transform: translateY(-2px);
   border-color: var(--border-strong);
+  box-shadow: var(--specular), var(--shadow);
 }
 .metric-head {
   display: flex;
@@ -570,117 +754,127 @@ body {
   gap: 10px;
 }
 .card .k {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: -0.005em;
 }
 .metric-icon-wrap {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  color: var(--accent-hover);
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 9px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  color: var(--accent-text);
+  border-radius: 8px;
   background: var(--accent-soft);
 }
-.metric-icon { width: 16px; height: 16px; }
+.metric-icon { width: 15px; height: 15px; }
 .card .v {
-  font-size: clamp(18px, 1.85vw, 23px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin-top: 11px;
+  font-family: var(--font-mono);
+  font-size: clamp(19px, 1.85vw, 24px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-top: 14px;
   overflow-wrap: anywhere;
 }
 .card .s {
   font-size: 12px;
   color: var(--text-dim);
-  margin-top: 4px;
+  margin-top: 5px;
   min-height: 18px;
 }
 .meter {
-  height: 5px;
+  height: 4px;
   width: 100%;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--surface-3);
   border-radius: 99px;
   overflow: hidden;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 .meter > span {
   display: block;
   height: 100%;
   border-radius: 99px;
-  background: var(--accent-hover);
+  background: var(--accent);
   transition: width 0.35s ease;
 }
 .meter.warn > span { background: var(--warn); }
 .meter.crit > span { background: var(--danger); }
 
-/* Section Headings & Health */
+/* Section Headings */
 .section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  margin: 6px 0 12px;
+  margin: 8px 0 14px;
 }
 .section-heading h2, h3 {
   color: var(--text);
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
-h3 { margin: 22px 0 10px; }
+h3 { margin: 24px 0 12px; }
+.eyebrow {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
 .health-summary {
-  padding: 5px 11px;
-  border: 1px solid rgba(16, 185, 129, 0.32);
+  padding: 5px 12px;
+  border: 1px solid var(--border);
   border-radius: 99px;
   color: var(--ok-text);
   background: var(--ok-bg);
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
 }
 
-/* Tables */
+/* Precision Data Tables */
 .tblwrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(15, 22, 36, 0.92);
-  box-shadow: var(--shadow);
+  background: var(--surface);
+  box-shadow: var(--specular), var(--shadow-sm);
 }
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 600px;
+  min-width: 620px;
 }
 th, td {
-  padding: 12px 15px;
+  padding: 13px 16px;
   text-align: left;
   font-size: 13.5px;
-  border-bottom: 1px solid rgba(35, 49, 73, 0.72);
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 th {
-  background: #10192a;
-  color: var(--text-muted);
-  font-size: 11.5px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.055em;
+  letter-spacing: 0.07em;
 }
+td { font-variant-numeric: tabular-nums; }
+td b { font-weight: 600; color: var(--text); }
+td.mono-cell { font-family: var(--font-mono); font-size: 12.5px; }
 tr:last-child td { border-bottom: none; }
-tbody tr { transition: background 0.12s ease; }
-tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+tbody tr { transition: background-color 0.12s ease; }
+tbody tr:hover { background: var(--surface-2); }
 .empty-cell {
   text-align: center;
   color: var(--text-dim);
-  padding: 28px 16px;
+  padding: 34px 16px;
 }
 .row-actions {
   display: inline-flex;
@@ -694,136 +888,172 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: 7px;
+  margin-right: 8px;
   vertical-align: middle;
 }
-.on-dot { background: var(--ok); box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+.on-dot { background: var(--ok); }
 .off-dot { background: var(--danger); }
+
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 2.5px 9px;
-  border-radius: 99px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
   font-size: 11.5px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.3;
 }
 .pill.g { background: var(--ok-bg); color: var(--ok-text); }
 .pill.r { background: var(--danger-bg); color: var(--danger-text); }
 .pill.b { background: var(--info-bg); color: var(--info-text); }
 .pill.w { background: var(--warn-bg); color: var(--warn-text); }
-.quota-cell { min-width: 110px; }
+
+.quota-cell { min-width: 115px; font-family: var(--font-mono); font-size: 12.5px; }
 .quota-bar {
   height: 4px;
-  width: 86px;
-  background: rgba(255, 255, 255, 0.08);
+  width: 88px;
+  background: var(--surface-3);
   border-radius: 99px;
   overflow: hidden;
-  margin-top: 4px;
+  margin-top: 5px;
 }
 .quota-bar > span {
   display: block;
   height: 100%;
-  background: var(--accent-hover);
+  background: var(--accent);
   border-radius: 99px;
 }
 .quota-bar.warn > span { background: var(--warn); }
 .quota-bar.crit > span { background: var(--danger); }
 
-/* Buttons & Controls */
+/* Tactile Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 35px;
-  padding: 7px 14px;
+  min-height: 36px;
+  padding: 7px 15px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  font-family: inherit;
+  font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent);
   text-decoration: none;
-  transition: background 0.14s ease, transform 0.12s ease, border-color 0.14s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: background-color 0.14s ease, transform 0.12s ease, border-color 0.14s ease;
 }
-.btn:hover { background: #0284c7; transform: translateY(-1px); }
+.btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
 .btn:active { transform: translateY(0); }
-.btn.sm { min-height: 28px; padding: 4px 10px; font-size: 12px; border-radius: 7px; }
+.btn.sm {
+  min-height: 29px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
 .btn.grey {
   background: var(--surface-2);
   color: var(--text);
   border-color: var(--border);
+  box-shadow: var(--specular);
 }
-.btn.grey:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.btn.grey:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
 .btn.red {
-  background: rgba(185, 28, 28, 0.85);
-  color: #fee2e2;
-  border-color: rgba(239, 68, 68, 0.35);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: rgba(239, 68, 68, 0.28);
+  box-shadow: none;
 }
-.btn.red:hover { background: #dc2626; }
+.btn.red:hover {
+  background: var(--danger);
+  color: #fff;
+}
 .btn.copied {
   background: var(--ok-bg) !important;
   color: var(--ok-text) !important;
-  border-color: rgba(16, 185, 129, 0.4) !important;
+  border-color: transparent !important;
 }
-.button-icon { width: 15px; height: 15px; }
+.button-icon { width: 14px; height: 14px; }
 form.inline { display: inline-flex; gap: 6px; align-items: center; }
 
-/* Inputs & Forms */
+/* Inputs & Composer Forms */
 input, select {
-  font-family: inherit;
-  background: var(--bg);
+  font-family: var(--font-sans);
+  background: var(--surface-inset);
   border: 1px solid var(--border-strong);
   color: var(--text);
-  padding: 8px 11px;
-  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  border-radius: var(--radius-xs);
   font-size: 13.5px;
-  min-height: 36px;
+  min-height: 38px;
   transition: border-color 0.14s ease, box-shadow 0.14s ease;
 }
 input::placeholder { color: var(--text-dim); }
 input:focus, select:focus {
   outline: none;
-  border-color: var(--accent-hover);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.nav a:focus-visible, .btn:focus-visible, .filter-chip:focus-visible {
-  outline: 2px solid var(--accent-hover);
+.nav a:focus-visible, .btn:focus-visible, .filter-chip:focus-visible, .icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.addform {
-  background: linear-gradient(160deg, rgba(21, 31, 50, 0.95), rgba(14, 21, 35, 0.96));
+
+.composer-card {
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  margin-bottom: 16px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--specular), var(--shadow-sm);
+}
+.composer-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.addform {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
   align-items: flex-end;
-  box-shadow: var(--shadow);
 }
-.addform > div { display: flex; flex-direction: column; min-width: 135px; flex: 1 1 145px; }
-.addform label, .field-label {
+.addform > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 135px;
+  flex: 1 1 145px;
+}
+.addform label {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 .pw-group { display: flex; gap: 6px; }
-.pw-group input { flex: 1; min-width: 0; }
+.pw-group input { flex: 1; min-width: 0; font-family: var(--font-mono); }
 
-/* Table Toolbar (Search + Filter Chips) */
+/* Search & Segmented Filter Bar */
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 12px;
 }
 .search-box {
@@ -833,7 +1063,7 @@ input:focus, select:focus {
 }
 .search-box svg {
   position: absolute;
-  left: 11px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
   width: 15px;
@@ -841,46 +1071,47 @@ input:focus, select:focus {
   color: var(--text-dim);
   pointer-events: none;
 }
-.search-box input { width: 100%; padding-left: 34px; }
+.search-box input { width: 100%; padding-left: 36px; background: var(--surface); }
 .filter-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .filter-chip {
-  background: var(--bg-elev);
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  padding: 5px 11px;
+  padding: 6px 12px;
   border-radius: 99px;
+  font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: 0.14s ease;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
 }
 .filter-chip:hover { color: var(--text); border-color: var(--border-strong); }
 .filter-chip.on {
   background: var(--accent-soft);
-  color: var(--accent-hover);
-  border-color: rgba(56, 189, 248, 0.38);
+  color: var(--accent-text);
+  border-color: transparent;
 }
 
-/* Flash Messages */
+/* Status Flash Banners */
 .msg {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   background: var(--ok-bg);
-  border: 1px solid rgba(16, 185, 129, 0.35);
+  border: 1px solid var(--border);
   color: var(--ok-text);
-  padding: 11px 15px;
-  border-radius: 10px;
-  margin-bottom: 18px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 20px;
   font-size: 13.5px;
+  font-weight: 500;
 }
 .msg.err {
   background: var(--danger-bg);
-  border-color: rgba(239, 68, 68, 0.4);
   color: var(--danger-text);
 }
-.msg-inner { display: flex; align-items: center; gap: 9px; }
+.msg-inner { display: flex; align-items: center; gap: 10px; }
 .msg-inner svg { width: 17px; height: 17px; flex: 0 0 17px; }
 .msg-close {
   background: none;
@@ -894,162 +1125,247 @@ input:focus, select:focus {
 }
 .msg-close:hover { opacity: 1; }
 
-/* Edit, Settings & Link Cards */
-.editform { max-width: 540px; }
+/* Edit, Settings & Connection Sheets */
+.editform { max-width: 560px; }
 .editform label {
   font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-muted);
   display: block;
-  margin: 14px 0 5px;
+  margin: 14px 0 6px;
 }
-.editform input, .editform select { width: 100%; padding: 9px 11px; }
-.form-actions { display: flex; gap: 10px; margin-top: 20px; }
+.editform input, .editform select { width: 100%; }
+.form-actions { display: flex; gap: 10px; margin-top: 22px; }
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 20px;
   align-items: start;
 }
 .meta-line { margin: 10px 0; font-size: 13.5px; color: var(--text-muted); }
 .meta-line b { color: var(--text); }
+.meta-line code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--surface-2);
+}
 .log-viewer {
   white-space: pre-wrap;
   word-break: break-all;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-muted);
-  background: var(--bg);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 16px;
+}
+
+.link-group { margin-bottom: 22px; }
+.link-item {
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  max-height: 220px;
-  overflow: auto;
-  margin-top: 14px;
-}
-.link-group { margin-bottom: 18px; }
-.link-item {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   margin-bottom: 10px;
+  box-shadow: var(--specular);
 }
 .link-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 9px;
 }
 .link-box {
-  background: var(--bg);
+  background: var(--surface-inset);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 11px;
+  border-radius: var(--radius-xs);
+  padding: 10px 12px;
   word-break: break-all;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
-  color: #cbd5e1;
-  line-height: 1.45;
+  color: var(--text);
+  line-height: 1.5;
 }
 .kv-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 10px;
-  margin: 14px 0 20px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 14px 0 22px;
 }
 .kv-item {
-  background: var(--bg-elev);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  padding: 13px 15px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  box-shadow: var(--specular);
 }
-.kv-item .k { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.kv-item .k {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
 .kv-item .val {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text);
   word-break: break-all;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
-/* Login Screen */
-.login-wrap { margin: auto; width: 400px; max-width: 92vw; padding: 24px 0; }
-.login-card {
-  background: linear-gradient(160deg, #141e33, #0e1524);
+/* Split-Screen Editorial Login */
+.login-shell {
+  margin: auto;
+  width: 880px;
+  max-width: 94vw;
+  padding: 28px 0;
+}
+.login-split {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 34px 30px;
-  box-shadow: 0 24px 64px rgba(2, 6, 16, 0.65);
+  overflow: hidden;
+  box-shadow: var(--specular), var(--shadow);
 }
-.login-brand {
+.login-showcase {
+  padding: 42px 38px;
+  background: linear-gradient(165deg, var(--surface-2) 0%, var(--surface-inset) 100%);
+  border-right: 1px solid var(--border);
   display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 11px;
-  margin-bottom: 6px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 28px;
 }
-.login-card h1 { font-size: 22px; color: var(--text); letter-spacing: 0.05em; }
-.login-card p { text-align: center; color: var(--text-dim); font-size: 13px; margin-bottom: 22px; }
-.login-card label { font-size: 12.5px; color: var(--text-muted); display: block; margin: 14px 0 5px; }
+.showcase-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.showcase-title {
+  margin-top: 22px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.showcase-copy {
+  margin-top: 10px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.proto-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.proto-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.login-card {
+  padding: 42px 38px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.login-card h1 {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.login-card .login-sub {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  margin: 4px 0 22px;
+}
+.login-card label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  display: block;
+  margin: 14px 0 6px;
+}
 .login-card input { width: 100%; padding: 10px 12px; }
 .login-card .btn { width: 100%; padding: 11px; margin-top: 22px; font-size: 14px; }
 
 .skip-link {
   position: fixed;
-  z-index: 20;
+  z-index: 60;
   top: 10px;
   left: 10px;
   padding: 8px 12px;
   transform: translateY(-160%);
   border-radius: 8px;
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent);
   text-decoration: none;
+  font-weight: 600;
 }
 .skip-link:focus { transform: translateY(0); }
 
-/* Responsive */
-@media (max-width: 880px) {
-  body { flex-direction: column; }
-  .sidebar {
-    position: relative;
-    min-height: auto;
-    width: 100%;
-    padding: 12px 12px 0;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+/* Responsive Breakpoints */
+@media (max-width: 960px) {
+  .topbar-inner {
+    flex-wrap: wrap;
+    padding: 12px 16px;
   }
-  .logo { padding: 0 4px 12px; }
-  .logo small br { display: none; }
   .nav {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    padding: 0 0 10px;
-    scrollbar-width: thin;
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
   }
-  .nav a { flex: 0 0 auto; gap: 7px; padding: 8px 11px; white-space: nowrap; }
-  .nav a.on { box-shadow: inset 0 -2px 0 var(--accent-hover); }
-  .sidebar-footer { display: none; }
-  .main { width: 100%; max-width: none; padding: 22px 16px; }
+  .node-sep { display: none; }
+}
+@media (max-width: 760px) {
+  .login-split { grid-template-columns: 1fr; }
+  .login-showcase { padding: 28px 24px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .login-card { padding: 28px 24px; }
   .addform { flex-direction: column; align-items: stretch; }
   .addform > div { width: 100%; flex: 1 1 auto; }
 }
 @media (max-width: 560px) {
-  .main { padding: 18px 12px; }
+  .main { padding: 22px 14px 48px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .metric-card { padding: 13px; }
+  .metric-card { padding: 14px; }
   .card .v { font-size: 18px; }
-  .live-chip span { display: none; }
+  .logout-link span { display: none; }
 }
 """
 
 CLIENT_JS = """
+function toggleTheme() {
+  var root = document.documentElement;
+  var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  root.setAttribute('data-theme', next);
+  try { localStorage.setItem('ragnar-theme', next); } catch (e) {}
+}
+function toggleLoginPw(btn) {
+  var inp = document.getElementById('login-pass');
+  if (!inp) return;
+  var show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? 'Hide' : 'Show';
+}
 function copyText(text, btn) {
   function done() {
     if (!btn) return;
@@ -1084,7 +1400,7 @@ function copyById(id, btn) {
   if (el) copyText(el.innerText || el.textContent, btn);
 }
 function copyAllLinks(btn) {
-  var boxes = document.querySelectorAll('.link-item:not([ hidden ]) .link-box');
+  var boxes = document.querySelectorAll('.link-item:not([hidden]) .link-box');
   var out = [];
   boxes.forEach(function(b) { out.push((b.innerText || b.textContent).trim()); });
   if (out.length) copyText(out.join('\\n'), btn);
@@ -1132,6 +1448,15 @@ function filterProto(chip, proto) {
 }
 """
 
+PAGE_SUBTITLES = {
+    "dashboard": "Real-time node telemetry, traffic accounting, and daemon health.",
+    "ssh": "Manage OpenSSH, Dropbear, WebSocket, and SlowDNS tunnel accounts.",
+    "xray": "Provision multi-protocol VLESS, VMess, Trojan, Shadowsocks, and AnyTLS users.",
+    "zivpn": "Manage UDP Hysteria / ZIVPN tunnel credentials and expirations.",
+    "services": "Inspect systemd unit health, restart daemons, and view SlowDNS keys.",
+    "settings": "Configure web administrator credentials and run in-place panel updates.",
+}
+
 
 def _is_error_flash(text):
     low = text.lower()
@@ -1154,7 +1479,6 @@ def layout(title, active, body, flash="", page_icon="server", extra_js=""):
         (U("/zivpn"), "zivpn", "ZIVPN", "zivpn"),
         (U("/services"), "services", "Services", "services"),
         (U("/settings"), "settings", "Settings", "settings"),
-        (U("/logout"), "", "Logout", "logout"),
     ]
     nav_items = []
     for href, key, label, icon_name in nav:
@@ -1178,18 +1502,29 @@ def layout(title, active, body, flash="", page_icon="server", extra_js=""):
             f'onclick="this.parentElement.remove()">&times;</button></div>'
         )
 
+    subtitle = PAGE_SUBTITLES.get(active, "Ragnar VPS Management Console")
+    sync_indicator = (
+        '<span class="sync-label" id="sync-clock">Live · 15s</span>'
+        if active == "dashboard" else ""
+    )
+
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Ragnar VPS Management Panel - {esc(title)}">
-<title>{esc(title)} - Ragnar Panel</title><style>{CSS}</style></head>
+<title>{esc(title)} - Ragnar Panel</title>{FONTS_HEAD}<style>{CSS}</style></head>
 <body><a class="skip-link" href="#main">Skip to content</a>
-<aside class="sidebar"><div class="logo"><span class="logo-badge">{icon("server", "logo-icon")}</span>
-<span>RAGNAR<small>VPS Management Panel<br>by @farisbazed</small></span></div>
+<header class="topbar"><div class="topbar-inner">
+<a class="brand" href="{U('/')}"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
+<span class="brand-text"><span class="brand-name">RAGNAR</span><span class="brand-sub">VPS Console</span></span></a>
 <nav class="nav" aria-label="Primary navigation">{links}</nav>
-<div class="sidebar-footer"><span class="sidebar-dot"></span><span>Panel ready</span></div></aside>
-<main class="main" id="main"><header class="page-heading"><div>
-<div class="eyebrow">Ragnar VPS Panel</div><h1>{esc(title)}</h1></div>
-<div class="heading-actions"><div class="page-mark">{icon(page_icon)}</div></div></header>{msg}{body}</main>
+<div class="topbar-utils">
+<button class="icon-btn" id="theme-toggle" type="button" onclick="toggleTheme()" title="Switch theme" aria-label="Switch color theme">
+<span class="theme-sun">{icon("sun")}</span><span class="theme-moon">{icon("moon")}</span></button>
+<a class="logout-link" href="{U('/logout')}">{icon("logout", "nav-icon")}<span>Logout</span></a>
+</div></div></header>
+<main class="main" id="main"><div class="page-heading"><div>
+<h1>{esc(title)}</h1><p class="page-sub">{esc(subtitle)}</p></div>
+<div class="heading-actions">{sync_indicator}</div></div>{msg}{body}</main>
 <script>{CLIENT_JS}{extra_js}</script></body></html>"""
 
 
@@ -1201,16 +1536,32 @@ def login_page(error=""):
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Sign in to Ragnar VPS Management Panel">
-<title>Login - Ragnar Panel</title><style>{CSS}</style></head>
-<body><div class="login-wrap"><div class="login-card">
-<div class="login-brand"><span class="logo-badge">{icon("server", "logo-icon")}</span>
-<h1>RAGNAR</h1></div><p>VPS Management Panel</p>{err}
+<title>Login - Ragnar Panel</title>{FONTS_HEAD}<style>{CSS}</style></head>
+<body><div class="login-shell"><div class="login-split">
+<div class="login-showcase"><div>
+<div class="showcase-head"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
+<span class="brand-text"><span class="brand-name">RAGNAR</span><span class="brand-sub">by @farisbazed</span></span></div>
+<div class="showcase-title">Unified multi-protocol edge &amp; tunnel control.</div>
+<p class="showcase-copy">Manage SSH, TLS multiplexers, Xray cores, ZIVPN UDP tunnels, and SlowDNS resolvers from a zero-dependency control plane.</p>
+</div>
+<div class="proto-tags">
+<span class="proto-tag">SSH / WS</span><span class="proto-tag">VLESS</span><span class="proto-tag">VMess</span>
+<span class="proto-tag">Trojan</span><span class="proto-tag">AnyTLS</span><span class="proto-tag">ZIVPN</span><span class="proto-tag">DNSTT</span>
+</div></div>
+<div class="login-card">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<h1>Sign in</h1>
+<button class="icon-btn" id="login-theme-toggle" type="button" onclick="toggleTheme()" title="Switch theme" aria-label="Switch color theme">
+<span class="theme-sun">{icon("sun")}</span><span class="theme-moon">{icon("moon")}</span></button>
+</div>
+<p class="login-sub">Enter your administrator credentials to continue.</p>{err}
 <form method="post" action="{U('/login')}">
 <label for="login-user">Username</label><input id="login-user" name="username" autocomplete="username" required>
-<label for="login-pass">Password</label><input id="login-pass" name="password" type="password"
-autocomplete="current-password" required>
+<label for="login-pass">Password</label>
+<div class="pw-group"><input id="login-pass" name="password" type="password" autocomplete="current-password" required>
+<button class="btn sm grey" type="button" onclick="toggleLoginPw(this)">Show</button></div>
 <button class="btn" id="login-submit" type="submit">Sign in</button></form>
-</div></div></body></html>"""
+</div></div></div><script>{CLIENT_JS}</script></body></html>"""
 
 
 def _filter_toolbar(total_count, include_online=True):
@@ -1222,7 +1573,7 @@ def _filter_toolbar(total_count, include_online=True):
     return (
         f'<div class="toolbar">'
         f'<div class="search-box">{icon("search")}'
-        f'<input id="user-search" type="search" placeholder="Search username..." '
+        f'<input id="user-search" type="search" placeholder="Filter by username..." '
         f'oninput="filterUsers()" autocomplete="off"></div>'
         f'<div class="filter-group">'
         f'<button type="button" class="filter-chip on" data-filter="all" '
@@ -1242,7 +1593,7 @@ def _days_badge(days):
         return f'<span class="pill r">expired ({days}d)</span>'
     if days <= 3:
         return f'<span class="pill w">{days}d</span>'
-    return f"{days}d"
+    return f'<span class="mono">{days}d</span>'
 
 
 def _quota_cell(u):
@@ -1250,14 +1601,14 @@ def _quota_cell(u):
     quota_gb = float(u.get("quota_gb") or 0)
     used_s = esc(fmt_used(u))
     if quota_gb <= 0:
-        return f"<td>{used_s}</td><td>Unlimited</td>"
+        return f'<td class="mono-cell">{used_s}</td><td class="mono-cell">Unlimited</td>'
     limit_b = quota_gb * (1024 ** 3)
     pct = min(100.0, round(used_b * 100.0 / limit_b, 1)) if limit_b > 0 else 0.0
     q_cls = "quota-bar crit" if pct >= 90 else ("quota-bar warn" if pct >= 75 else "quota-bar")
     return (
         f'<td class="quota-cell">{used_s}'
         f'<div class="{q_cls}"><span style="width:{pct}%"></span></div></td>'
-        f"<td>{esc(fmt_quota(u))}</td>"
+        f'<td class="mono-cell">{esc(fmt_quota(u))}</td>'
     )
 
 
@@ -1288,11 +1639,11 @@ def user_table(rows, kind, csrf):
             extra_link = f'<a class="btn sm grey" href="{U("/ssh/info")}?u={esc(name)}">Info</a> '
         out.append(
             f'<tr data-user="{esc(name.lower())}" data-state="{rstate}" data-expiring="{exp_attr}">'
-            f"<td><b>{esc(name)}</b></td>"
-            f"<td>{esc(u['expiry'])}</td>"
+            f'<td class="mono-cell"><b>{esc(name)}</b></td>'
+            f'<td class="mono-cell">{esc(u["expiry"])}</td>'
             f"<td>{_days_badge(d_left)}</td>"
             f"{_quota_cell(u)}"
-            f"<td>{esc(u.get('ip_limit') or '∞')}</td>"
+            f'<td class="mono-cell">{esc(u.get("ip_limit") or "∞")}</td>'
             f"<td>{status}</td>"
             f'<td><div class="row-actions">{extra_link}'
             f'<a class="btn sm" href="{U("/" + kind + "/edit")}?u={esc(name)}">Edit</a>'
@@ -1305,7 +1656,7 @@ def user_table(rows, kind, csrf):
             f'onclick="return confirm(\'Delete {esc(name)}?\')">delete</button>'
             f"</form></div></td></tr>"
         )
-    empty_row = '<tr><td colspan="8" class="empty-cell">No users yet. Create one above to get started.</td></tr>'
+    empty_row = '<tr><td colspan="8" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
     return (
         _filter_toolbar(len(rows), include_online=True)
         + f'<div class="tblwrap"><table>{head}<tbody>'
@@ -1337,12 +1688,13 @@ def add_user_form(kind, csrf):
             '<div><label>IP limit (0 = unlimited)</label>'
             '<input name="iplimit" type="number" value="0" min="0"></div>'
         )
-    return f"""<form class="addform" method="post" action="{U('/' + kind + '/action')}">
+    return f"""<section class="composer-card"><div class="composer-title">Provision New {esc(kind.upper())} Account</div>
+<form class="addform" method="post" action="{U('/' + kind + '/action')}">
 <input type="hidden" name="csrf" value="{csrf}">
 <div><label>Username</label><input name="user" placeholder="e.g. client01" required></div>{pw}{uuid_field}
 <div><label>Days</label><input name="days" type="number" value="30" min="1"></div>
 {quota}<button class="btn" name="op" value="create" type="submit">{icon("plus", "button-icon")}Create user</button>
-</form>"""
+</form></section>"""
 
 
 def page_dashboard(csrf, flash=""):
@@ -1353,20 +1705,34 @@ def page_dashboard(csrf, flash=""):
     today = bw.get("today") or {}
     month = bw.get("month") or {}
 
+    node_strip = (
+        f'<section class="node-strip"><div class="node-meta">'
+        f'<div class="node-kv"><span>Primary Host</span><strong>{esc(info["ip"])}</strong></div>'
+        f'<div class="node-sep"></div>'
+        f'<div class="node-kv"><span>Platform</span><strong>{esc(info["os"])}</strong></div>'
+        f'<div class="node-sep"></div>'
+        f'<div class="node-kv"><span>System Uptime</span><strong>{esc(info["uptime"])}</strong></div>'
+        f'</div><div class="quick-links">'
+        f'<a class="btn sm grey" href="{U("/ssh")}">{icon("plus", "button-icon")}SSH User</a>'
+        f'<a class="btn sm grey" href="{U("/xray")}">{icon("plus", "button-icon")}Xray User</a>'
+        f'<a class="btn sm grey" href="{U("/zivpn")}">{icon("plus", "button-icon")}ZIVPN User</a>'
+        f'</div></section>'
+    )
+
     cards = [
         ("Server IP", info["ip"], info["os"], "ip", None, "stat-ip"),
         ("CPU load", info["cpu"], f"Uptime {info['uptime']}", "cpu", info["cpu_pct"], "stat-cpu"),
-        ("Memory", info["ram"], f"{info['ram_pct']}% utilized", "uptime", info["ram_pct"], "stat-ram"),
-        ("Disk", info["disk"], f"{info['disk_pct']}% used", "disk", info["disk_pct"], "stat-disk"),
-        ("Users", str(stats.get("total", 0)),
+        ("Memory", info["ram"], f"{info['ram_pct']}% allocated", "uptime", info["ram_pct"], "stat-ram"),
+        ("Disk", info["disk"], f"{info['disk_pct']}% mounted /", "disk", info["disk_pct"], "stat-disk"),
+        ("Total accounts", str(stats.get("total", 0)),
          f"SSH {stats.get('ssh', 0)} · Xray {stats.get('vless', 0)} · ZIVPN {stats.get('zivpn', 0)}",
          "users", None, "stat-users"),
-        ("Online now", str(online.get("online", 0)),
-         "SSH sessions + active Xray", "online", None, "stat-online"),
+        ("Active sessions", str(online.get("online", 0)),
+         "Live SSH + Xray streams", "online", None, "stat-online"),
         ("Bandwidth today", today.get("total_f", "n/a"),
-         "Combined WAN traffic", "bandwidth", None, "stat-bwtoday"),
+         "Combined daily transfer", "bandwidth", None, "stat-bwtoday"),
         ("Bandwidth month", month.get("total_f", "n/a"),
-         "Combined monthly total", "bandwidth", None, "stat-bwmonth"),
+         "Combined 30-day transfer", "bandwidth", None, "stat-bwmonth"),
     ]
     card_parts = []
     for k, v, s, icon_name, pct, cid in cards:
@@ -1374,11 +1740,11 @@ def page_dashboard(csrf, flash=""):
         if pct is not None:
             meter_html = f'<div class="{_meter_cls(pct)}"><span data-meter="{cid}" style="width:{pct}%"></span></div>'
         card_parts.append(
-            f'<section class="card metric-card"><div class="metric-head">'
+            f'<section class="card metric-card"><div><div class="metric-head">'
             f'<div class="k">{esc(k)}</div><span class="metric-icon-wrap">'
             f'{icon(icon_name, "metric-icon")}</span></div>'
             f'<div class="v" id="{cid}">{esc(v)}</div>'
-            f'<div class="s">{esc(s)}</div>{meter_html}</section>'
+            f'<div class="s">{esc(s)}</div></div>{meter_html}</section>'
         )
     card_html = "".join(card_parts)
 
@@ -1389,8 +1755,8 @@ def page_dashboard(csrf, flash=""):
         dot_cls = "on-dot" if is_up else "off-dot"
         st_lbl = "ONLINE" if is_up else "OFFLINE"
         svc_rows.append(
-            f'<tr data-svc="{esc(s)}"><td><b>{esc(s)}</b></td>'
-            f'<td><span class="dot {dot_cls}"></span><span class="svc-txt">{st_lbl}</span></td>'
+            f'<tr data-svc="{esc(s)}"><td class="mono-cell"><b>{esc(s)}</b></td>'
+            f'<td><span class="dot {dot_cls}"></span><span class="svc-txt mono">{st_lbl}</span></td>'
             f'<td style="text-align:right">'
             f'<form class="inline" method="post" action="{U("/services/restart")}">'
             f'<input type="hidden" name="csrf" value="{csrf}">'
@@ -1419,7 +1785,9 @@ def page_dashboard(csrf, flash=""):
       set('stat-bwtoday', d.bw_today);
       set('stat-bwmonth', d.bw_month);
       var hs = document.getElementById('health-badge');
-      if (hs) hs.textContent = d.online_services + ' of ' + d.total_services + ' online';
+      if (hs) hs.textContent = d.online_services + ' / ' + d.total_services + ' healthy';
+      var sc = document.getElementById('sync-clock');
+      if (sc) sc.textContent = 'Synced ' + new Date().toLocaleTimeString([], {{hour:'2-digit', minute:'2-digit', second:'2-digit'}});
       [['stat-cpu', d.info.cpu_pct], ['stat-ram', d.info.ram_pct], ['stat-disk', d.info.disk_pct]].forEach(function(p) {{
         var m = document.querySelector('[data-meter="' + p[0] + '"]');
         if (m) m.style.width = (p[1] || 0) + '%';
@@ -1442,13 +1810,12 @@ def page_dashboard(csrf, flash=""):
 """
     return layout(
         "Dashboard", "dashboard",
-        f'<div class="cards">{card_html}</div>'
-        f'<div class="section-heading"><div><div class="eyebrow">Health</div>'
-        f'<h2>Service status</h2></div>'
-        f'<span class="health-summary" id="health-badge">{online_services} of '
-        f'{len(service_states)} online</span></div><div class="tblwrap">'
-        f"<table><thead><tr><th>Service</th><th>State</th>"
-        f'<th style="text-align:right">Action</th></tr></thead>'
+        f'{node_strip}<div class="cards">{card_html}</div>'
+        f'<div class="section-heading"><div><h2>Service status</h2></div>'
+        f'<span class="health-summary" id="health-badge">{online_services} / '
+        f'{len(service_states)} healthy</span></div><div class="tblwrap">'
+        f"<table><thead><tr><th>Daemon Unit</th><th>State</th>"
+        f'<th style="text-align:right">Control</th></tr></thead>'
         f"<tbody>{svc_html}</tbody></table></div>",
         flash, page_icon="dashboard", extra_js=dash_js,
     )
@@ -1472,7 +1839,7 @@ def page_users(kind, csrf, flash=""):
             toggle = "enable" if not enabled else "disable"
             body_rows.append(
                 f'<tr data-user="{esc(n.lower())}" data-state="{rstate}" data-expiring="{exp_attr}">'
-                f"<td><b>{esc(n)}</b></td><td>{esc(u['expiry'])}</td>"
+                f'<td class="mono-cell"><b>{esc(n)}</b></td><td class="mono-cell">{esc(u["expiry"])}</td>'
                 f"<td>{_days_badge(d_left)}</td><td>{st_pill}</td>"
                 f'<td><div class="row-actions">'
                 f'<a class="btn sm" href="{U("/zivpn/edit")}?u={esc(n)}">Edit</a>'
@@ -1485,7 +1852,7 @@ def page_users(kind, csrf, flash=""):
                 f'onclick="return confirm(\'Delete {esc(n)}?\')">delete</button>'
                 f"</form></div></td></tr>"
             )
-        empty_row = '<tr><td colspan="5" class="empty-cell">No users yet. Create one above to get started.</td></tr>'
+        empty_row = '<tr><td colspan="5" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
         table = (
             _filter_toolbar(len(rows), include_online=False)
             + f'<div class="tblwrap"><table>{head}<tbody>'
@@ -1527,8 +1894,8 @@ def page_edit(kind, user, csrf, flash=""):
     sel_yes = "selected" if enabled == "yes" else ""
     sel_no = "selected" if enabled == "no" else ""
     body = f"""<div class="card editform">
-<div class="k">{esc(kind.upper())} user</div>
-<div class="v">{esc(user)}</div>
+<div class="eyebrow">{esc(kind.upper())} Account</div>
+<div class="v" style="margin-top:6px">{esc(user)}</div>
 <p class="meta-line">Expires: <b>{esc(u['expiry'])}</b> ({esc(left)} days left)</p>{used}
 <form method="post" action="{U('/' + kind + '/edit')}">
 <input type="hidden" name="csrf" value="{csrf}">
@@ -1583,7 +1950,7 @@ def page_ssh_info(user, csrf, flash=""):
         f"Connection: Upgrade[crlf][crlf]"
     )
     body = (
-        f'<div class="section-heading"><div><div class="eyebrow">Account Sheet</div>'
+        f'<div class="section-heading"><div>'
         f'<h2>Connection details for {esc(user)}</h2></div>'
         f'<a class="btn sm grey" href="{U("/ssh")}">Back to SSH users</a></div>'
         f'<div class="kv-grid">{"".join(kv_cards)}</div>'
@@ -1640,8 +2007,8 @@ def page_services(csrf, flash=""):
         dot_cls = "on-dot" if on else "off-dot"
         st_lbl = "ONLINE" if on else "OFFLINE"
         rows.append(
-            f'<tr><td><b>{esc(s)}</b></td>'
-            f'<td><span class="dot {dot_cls}"></span>{st_lbl}</td>'
+            f'<tr><td class="mono-cell"><b>{esc(s)}</b></td>'
+            f'<td><span class="dot {dot_cls}"></span><span class="mono">{st_lbl}</span></td>'
             f'<td style="text-align:right">'
             f'<form class="inline" method="post" action="{U("/services/restart")}">'
             f'<input type="hidden" name="csrf" value="{csrf}">'
@@ -1663,26 +2030,25 @@ def page_services(csrf, flash=""):
     slow = (
         f'<h3>SlowDNS / DNSTT Configuration</h3>'
         f'<div class="tblwrap"><table><tbody>'
-        f'<tr><td>Nameserver</td><td id="sd-ns">{esc(ns_val)}</td>'
+        f'<tr><td>Nameserver</td><td id="sd-ns" class="mono-cell">{esc(ns_val)}</td>'
         f'<td style="text-align:right"><button class="btn sm grey" type="button" '
         f'onclick="copyById(\'sd-ns\', this)">Copy</button></td></tr>'
-        f'<tr><td>Public key</td><td id="sd-pub" style="word-break:break-all;white-space:normal">'
+        f'<tr><td>Public key</td><td id="sd-pub" class="mono-cell" style="word-break:break-all;white-space:normal">'
         f'{esc(pub_val)}</td>'
         f'<td style="text-align:right"><button class="btn sm grey" type="button" '
         f'onclick="copyById(\'sd-pub\', this)">Copy</button></td></tr>'
-        f'<tr><td>Build</td><td colspan="2">dnstt-server turbo (KCP 10ms, window 1024, smux 4MB)</td></tr>'
-        f'<tr><td>MTU</td><td colspan="2">{esc(sd_file("mtu", "1232"))}</td></tr>'
-        f'<tr><td>Backend</td><td colspan="2">127.0.0.1:{esc(sd_file("target_port", "22"))}</td></tr>'
-        f'<tr><td>Resolver</td><td colspan="2">{esc(sd_file("dns_resolver", "1.1.1.1"))}</td></tr>'
+        f'<tr><td>Build</td><td colspan="2" class="mono-cell">dnstt-server turbo (KCP 10ms, window 1024, smux 4MB)</td></tr>'
+        f'<tr><td>MTU</td><td colspan="2" class="mono-cell">{esc(sd_file("mtu", "1232"))}</td></tr>'
+        f'<tr><td>Backend</td><td colspan="2" class="mono-cell">127.0.0.1:{esc(sd_file("target_port", "22"))}</td></tr>'
+        f'<tr><td>Resolver</td><td colspan="2" class="mono-cell">{esc(sd_file("dns_resolver", "1.1.1.1"))}</td></tr>'
         f"</tbody></table></div>"
     )
     return layout(
         "Services", "services",
-        f'<div class="section-heading"><div><div class="eyebrow">Systemd Units</div>'
-        f'<h2>Managed daemons</h2></div>'
-        f'<span class="health-summary">{online_cnt} of {len(states)} online</span></div>'
+        f'<div class="section-heading"><div><h2>Managed daemons</h2></div>'
+        f'<span class="health-summary">{online_cnt} / {len(states)} healthy</span></div>'
         f'<div class="tblwrap"><table><thead><tr><th>Unit</th><th>State</th>'
-        f'<th style="text-align:right">Action</th></tr></thead>'
+        f'<th style="text-align:right">Control</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table></div>{slow}',
         flash, page_icon="services",
     )
@@ -1729,7 +2095,7 @@ def page_settings(csrf, flash=""):
 <div class="card editform">
 <form method="post" action="{U('/settings/password')}">
 <input type="hidden" name="csrf" value="{csrf}">
-<div class="k">Administrator Credentials</div>
+<div class="eyebrow">Administrator Credentials</div>
 <p class="meta-line">Username: <b>{esc(cfg['username'])}</b> · Port: <b>{esc(cfg.get('port', DEFAULT_PORT))}</b></p>
 <label for="cur-pw">Current password</label>
 <input id="cur-pw" name="current" type="password" required>
@@ -1743,7 +2109,7 @@ def page_settings(csrf, flash=""):
 <div class="card editform">
 <form method="post" action="{U('/settings/update')}">
 <input type="hidden" name="csrf" value="{csrf}">
-<div class="k">Panel Self-Update</div>
+<div class="eyebrow">Panel Self-Update</div>
 <p class="meta-line">Installed version: <b>{esc(panel_version())}</b></p>
 {last}
 <p class="meta-line">Downloads the latest main branch from GitHub, backs up current state to <code>/root</code>, and updates panel code in place while preserving users, certificates, and SlowDNS keys.</p>
