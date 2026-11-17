@@ -673,6 +673,19 @@ def bandwidth():
     return res
 
 
+def bandwidth_summary(data=None):
+    """Format only the combined RX+TX totals for the dashboard."""
+    data = bandwidth() if data is None else data
+    lines = []
+    for label, period in (("TODAY", "today"), ("MONTH", "month")):
+        reading = data.get(period) or {}
+        lines.append(f"{label}: {reading.get('total_f', 'n/a')}")
+    source = data.get("source")
+    if source and source != "vnstat":
+        lines.append(f"(bandwidth source: {source})")
+    return "\n".join(lines)
+
+
 # --------------------------------------------------------------------------
 # Who is actually online (replaces the old "count every TCP socket" number)
 # --------------------------------------------------------------------------
@@ -1081,6 +1094,8 @@ def main(argv):
             _p(data) if "--json" in args else print(fmt_zivpn_users(data))
         elif cmd == "bandwidth":
             _p(bandwidth())
+        elif cmd == "bandwidth-summary":
+            print(bandwidth_summary())
         elif cmd == "gen-configs":
             apply_configs(); _p({"ok": True})
         elif cmd == "stats":

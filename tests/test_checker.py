@@ -16,6 +16,13 @@ SS_SAMPLE = """Recv-Q Send-Q Local Address:Port Peer Address:Port Process
 \t cubic bytes_sent:777777 bytes_received:888888
 """
 
+SLOWDNS_SSH_SAMPLE = """Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+0 0 127.0.0.1:22 127.0.0.1:51234 users:(("sshd",pid=8888,fd=3))
+\t cubic bytes_sent:4096 bytes_received:8192
+0 0 127.0.0.1:109 127.0.0.1:51235 users:(("dropbear",pid=8889,fd=5))
+\t cubic bytes_sent:100 bytes_received:200
+"""
+
 
 class TestCounterDelta(unittest.TestCase):
     def test_normal_delta(self):
@@ -31,7 +38,8 @@ class TestCounterDelta(unittest.TestCase):
 class TestSocketAccounting(unittest.TestCase):
     def setUp(self):
         C._pid_user = lambda pid: {1234: "fares", 55: "channel",
-                                   999: "root"}.get(pid)
+                                   999: "root", 8888: "dns-user",
+                                   8889: "dns-user"}.get(pid)
 
     def test_parse_only_daemon_sockets(self):
         # haproxy socket excluded (not a daemon), the sshd outbound
@@ -52,6 +60,14 @@ class TestSocketAccounting(unittest.TestCase):
         self.assertEqual(per_user["fares"], 485760 + 1048)
         self.assertEqual(per_user["channel"], 300)
         self.assertEqual(state[key], [10485760, 2048])
+
+    def test_slowdns_forwarded_ssh_is_counted_for_authenticated_user(self):
+        per_user, state = C.socket_usage_deltas(SLOWDNS_SSH_SAMPLE, {})
+        self.assertEqual(per_user, {"dns-user": 12588})
+        self.assertEqual(
+            state["dns-user|127.0.0.1:22|127.0.0.1:51234"], [4096, 8192])
+        self.assertEqual(
+            state["dns-user|127.0.0.1:109|127.0.0.1:51235"], [100, 200])
 
 
 if __name__ == "__main__":
