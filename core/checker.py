@@ -5,7 +5,7 @@ Ragnar limit checker - run every minute by ragnar-check.timer.
 Enforces, for every panel user:
   * expiry date          (SSH: lock account + kill sessions; Xray: disable + regen)
   * GB quota             (same actions; counters below)
-  * SSH IP limit         (extra source IPs get their sessions killed)
+  * SSH IP limit         (extra source IPs get ONLY that user's extra sessions killed)
 
 Traffic counters:
   * Xray: `xray api statsquery` user>>>email>>>traffic counters are added
@@ -16,13 +16,7 @@ Traffic counters:
     session - local port 22/109/143). DNSTT forwards SlowDNS sessions to
     the user's SSH backend on port 22 or 109, so those bytes are included.
     The daemon's outbound sockets to forwarded targets are excluded so
-    relayed bytes count once. This is the only reliable per-user source:
-    iptables owner-match does NOT see daemon relay traffic, because an
-    accepted socket belongs to the root listener, not the per-user child —
-    owner counters stayed at ~0 while users tunnelled gigabytes. Sockets
-    that open and close between two runs lose only their final partial
-    minute. The old owner-match counters are still accumulated for traffic
-    a user originates from a shell (disjoint from daemon sockets, no overlap).
+    relayed bytes count once.
 
 Without --apply it only prints the plan (dry run).
 """
@@ -30,6 +24,7 @@ import json
 import os
 import pwd
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -43,12 +38,7 @@ def run(cmd):
 
 
 def counter_delta(prev, total):
-    """Bytes moved since the previous reading of a cumulative counter.
-
-    Counters reset when their owner restarts (Xray, iptables rules,
-    sockets); a reading lower than the previous one means the counter
-    restarted at zero, so the whole current reading is new traffic.
-    """
+    """Bytes moved since the previous reading of a cumulative counter."""
     prev, total = int(prev), int(total)
     return total if total < prev else total - prev
 
@@ -63,44 +53,79 @@ def _pid_user(pid):
 
 
 DAEMON_PORTS = {"22", "109", "143"}  # sshd / dropbear listen ports
+SOCKET_LINE_RE = re.compile(r'(\S+):(\d+)\s+(\S+):(\d+)\s+users:\(\((.*?)\)\)')
+
+
+def _strip_brackets(host):
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    if host.startswith("::ffff:") and "." in host:
+        return host[7:]
+    return host
+
+
+def _iter_daemon_sockets(ss_text):
+    """Yield (user, local_ep, peer_ep, peer_ip, user_pids, next_line_info)
+    for client-facing sshd/dropbear sockets on DAEMON_PORTS."""
+    pid_cache = {}
+
+    def lookup(pid):
+        if pid not in pid_cache:
+            pid_cache[pid] = _pid_user(pid)
+        return pid_cache[pid]
+
+    lines = ss_text.splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m = SOCKET_LINE_RE.search(line)
+        if not m:
+            i += 1
+            continue
+        local_host, local_port, peer_host, peer_port, blob = m.groups()
+        info_line = ""
+        if i + 1 < n and not SOCKET_LINE_RE.search(lines[i + 1]):
+            info_line = lines[i + 1]
+            i += 2
+        else:
+            i += 1
+        if local_port not in DAEMON_PORTS:
+            continue
+        if '"sshd"' not in blob and '"dropbear"' not in blob:
+            continue
+        user = None
+        user_pids = []
+        for pid_s in re.findall(r"pid=(\d+)", blob):
+            pid = int(pid_s)
+            u = lookup(pid)
+            if u and u != "root":
+                user = user or u
+                if u == user and pid not in user_pids:
+                    user_pids.append(pid)
+        if user and user != "root":
+            yield (
+                user,
+                f"{local_host}:{local_port}",
+                f"{peer_host}:{peer_port}",
+                _strip_brackets(peer_host),
+                user_pids,
+                info_line,
+            )
 
 
 def parse_socket_bytes(ss_text):
-    """{(user, local, peer): (bytes_sent, bytes_received)} for the
-    CLIENT-facing sockets of live sshd/dropbear sessions, from
-    `ss -tnpi state established` output.
-
-    Only sockets whose local port is a daemon listen port count: those
-    carry exactly the bytes between the user and the box (the same
-    up+down semantics as the Xray counters). The daemon's outbound
-    sockets to forwarded targets have ephemeral local ports and are
-    excluded, so relayed bytes are never double-counted.
-    """
+    """{(user, local, peer): (bytes_sent, bytes_received)} for client-facing
+    sshd/dropbear sessions from `ss -tnpi state established` output."""
     sockets = {}
-    pending = None
-    for line in ss_text.splitlines():
-        m = re.search(r'(\S+):(\d+)\s+(\S+:\d+)\s+users:\(\((.*?)\)\)', line)
-        if m:
-            pending = None
-            blob = m.group(4)
-            if m.group(2) in DAEMON_PORTS and (
-                    '"sshd"' in blob or '"dropbear"' in blob):
-                user = None
-                for pid in re.findall(r"pid=(\d+)", blob):
-                    u = _pid_user(int(pid))
-                    if u and u != "root":
-                        user = u
-                        break
-                    user = user or u
-                if user and user != "root":
-                    pending = (user, f"{m.group(1)}:{m.group(2)}", m.group(3))
+    for user, local_ep, peer_ep, _, _, info_line in _iter_daemon_sockets(ss_text):
+        if not info_line:
             continue
-        if pending is not None:
-            sent = re.search(r"bytes_sent:(\d+)", line)
-            recv = re.search(r"bytes_received:(\d+)", line)
-            if sent and recv:
-                sockets[pending] = (int(sent.group(1)), int(recv.group(1)))
-            pending = None
+        sent = re.search(r"bytes_sent:(\d+)", info_line)
+        recv = re.search(r"bytes_received:(\d+)", info_line)
+        if sent and recv:
+            sockets[(user, local_ep, peer_ep)] = (
+                int(sent.group(1)), int(recv.group(1)))
     return sockets
 
 
@@ -128,7 +153,6 @@ def xray_deltas():
     except ValueError:
         return deltas
     for stat in data.get("stat", []):
-        # name: user>>>email>>>traffic>>>uplink|downlink
         parts = stat.get("name", "").split(">>>")
         if len(parts) == 4 and parts[0] == "user":
             email = parts[1]
@@ -136,35 +160,31 @@ def xray_deltas():
     return deltas
 
 
-def ssh_live_ips():
-    """{(kind, user): [ip,...]} from live sshd/dropbear sockets via /proc."""
+def ssh_live_ips(ss_text=None):
+    """{(kind, user): [ip,...]} from client-facing sshd/dropbear sockets."""
+    if ss_text is None:
+        ss_text = run("ss -tnp state established 2>/dev/null")
     live = {}
-    out = run("ss -tnp state established 2>/dev/null")
-    for line in out.splitlines():
-        m = re.search(r'users:\(\("(\w+)",pid=(\d+),fd=\d+\)\)', line)
-        ip = re.search(r"\[?(\d+\.\d+\.\d+\.\d+)\]?:\d+\s*$", line.strip())
-        if not m or not ip:
-            continue
-        prog, pid = m.group(1), int(m.group(2))
-        if prog not in ("sshd", "dropbear"):
-            continue
-        try:
-            with open(f"/proc/{pid}/status") as fh:
-                uid = int(re.search(r"^Uid:\s+(\d+)", fh.read(), re.M).group(1))
-            user = pwd.getpwuid(uid).pw_name
-        except Exception:
-            continue
-        live.setdefault(("ssh", user), []).append(ip.group(1))
+    for user, _, _, peer_ip, _, _ in _iter_daemon_sockets(ss_text):
+        live.setdefault(("ssh", user), []).append(peer_ip)
     return live
 
 
-def ensure_iptables_rules(ssh):
-    """One counting rule per SSH user in OUTPUT (owner match).
+def pids_to_kick(ss_text, target_user, keep_ips):
+    """Return non-root sshd/dropbear PIDs owned by `target_user` whose
+    client peer IP is not in `keep_ips`."""
+    victim_pids = []
+    for user, _, _, peer_ip, user_pids, _ in _iter_daemon_sockets(ss_text):
+        if user != target_user or peer_ip in keep_ips:
+            continue
+        for pid in user_pids:
+            if pid not in victim_pids:
+                victim_pids.append(pid)
+    return victim_pids
 
-    Only counts traffic a user's own processes originate (e.g. a shell
-    download) — daemon relay traffic is invisible to owner match and is
-    counted from ss socket counters instead (see module docstring).
-    """
+
+def ensure_iptables_rules(ssh):
+    """One counting rule per SSH user in OUTPUT (owner match)."""
     existing = run("iptables -S OUTPUT 2>/dev/null")
     for user in ssh:
         try:
@@ -175,11 +195,12 @@ def ensure_iptables_rules(ssh):
             run(f"iptables -A OUTPUT -m owner --uid-owner {uid} -j RETURN")
 
 
-def accumulate_usage():
+def accumulate_usage(ss_text=None):
+    if ss_text is None:
+        ss_text = run("ss -tnpi state established 2>/dev/null")
     ssh = ragnar.load_ssh()
     ensure_iptables_rules(ssh)
     changed = False
-    # iptables per-user counters
     counters = run("iptables -nvxL OUTPUT 2>/dev/null")
     per_user = {}
     for line in counters.splitlines():
@@ -200,12 +221,11 @@ def accumulate_usage():
                 changed = True
     if per_user:
         ragnar._write_json(state_f, per_user)
-    # Per-socket tcp_info counters: the real SSH relay traffic (see header).
+
     sock_f = os.path.join(ragnar.BASE, "db", "ssh_socket_state.json")
     sock_prev = {k: tuple(v) for k, v in
                  ragnar._read_json(sock_f, {}).items()}
-    sock_bytes, sock_state = socket_usage_deltas(
-        run("ss -tnpi state established 2>/dev/null"), sock_prev)
+    sock_bytes, sock_state = socket_usage_deltas(ss_text, sock_prev)
     for user, delta in sock_bytes.items():
         if user in ssh:
             ssh[user]["used_bytes"] = int(ssh[user].get("used_bytes", 0)) + delta
@@ -229,41 +249,53 @@ def accumulate_usage():
         ragnar._write_json(state_f, deltas)
     if changed:
         ragnar.save_xray(xr)
-    # Last-seen stamps for the ONLINE counter (ragnar.online_users): a user
-    # whose traffic counter moved this minute was active this minute.
+
     seen = ragnar._read_json(ragnar.XRAY_LAST_SEEN, {})
     now = time.time()
     for email, total in deltas.items():
         if email in xr and counter_delta(prev.get(email, 0), total) > 0:
             seen[email] = now
     seen = {e: ts for e, ts in seen.items()
-            if now - float(ts) <= 3600}  # prune stamps older than an hour
+            if now - float(ts) <= 3600}
     ragnar._write_json(ragnar.XRAY_LAST_SEEN, seen)
     return ssh, xr
 
 
 def main():
     apply_mode = "--apply" in sys.argv
-    ssh, xr = accumulate_usage()
-    live = ssh_live_ips()
+    ss_text = run("ss -tnpi state established 2>/dev/null")
+    ssh, xr = accumulate_usage(ss_text)
+    live = ssh_live_ips(ss_text)
     plan = ragnar.enforcement_plan(ssh, xr, live)
+    ssh_dirty = False
+    xray_dirty = False
     for item in plan:
         print(f"{item['kind']}/{item['user']}: {item['action']} ({item['reason']})")
         if not apply_mode:
             continue
+        user = item["user"]
         if item["kind"] == "ssh" and item["action"] == "lock":
-            run(f"usermod -L {item['user']}; pkill -u {item['user']} 2>/dev/null; true")
-            u = ssh[item["user"]]; u["enabled"] = False; ragnar.save_ssh(ssh)
+            subprocess.run(["usermod", "-L", user], capture_output=True)
+            subprocess.run(["pkill", "-u", user], capture_output=True)
+            ssh[user]["enabled"] = False
+            ssh_dirty = True
         elif item["kind"] == "ssh" and item["action"] == "kick-extra":
-            ips = list(dict.fromkeys(live.get(("ssh", item["user"]), [])))
-            keep = set(ips[: int(ssh[item["user"]].get("ip_limit", 0))])
-            for line in run("ss -tnp state established 2>/dev/null").splitlines():
-                m = re.search(r"\[?(\d+\.\d+\.\d+\.\d+)\]?:\d+\s+.*pid=(\d+)", line)
-                if m and m.group(1) not in keep:
-                    run(f"kill {m.group(2)} 2>/dev/null; true")
+            ips = list(dict.fromkeys(live.get(("ssh", user), [])))
+            keep = set(ips[: int(ssh[user].get("ip_limit", 0))])
+            for pid in pids_to_kick(ss_text, user, keep):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
         elif item["kind"] == "xray" and item["action"] == "remove":
-            u = xr[item["user"]]; u["enabled"] = False; ragnar.save_xray(xr)
-            ragnar.apply_configs()
+            xr[user]["enabled"] = False
+            xray_dirty = True
+    if ssh_dirty:
+        ragnar.save_ssh(ssh)
+        ragnar.sync_udp_custom()
+    if xray_dirty:
+        ragnar.save_xray(xr)
+        ragnar.apply_configs()
     if not plan:
         print("all users within limits")
     return 0

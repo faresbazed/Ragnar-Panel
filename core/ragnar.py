@@ -90,6 +90,23 @@ def _write_json(path, data):
     os.replace(tmp, path)
 
 
+def _write_json_if_changed(path, data):
+    """Write JSON atomically only if its serialized content changed."""
+    rendered = json.dumps(data, indent=2, sort_keys=True)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            if fh.read() == rendered:
+                return False
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(rendered)
+    os.replace(tmp, path)
+    return True
+
+
 def load_settings():
     s = _read_json(SETTINGS, {})
     def _file(name):
@@ -141,7 +158,17 @@ def save_ssh(users):
     _write_json(SSH_DB, {"users": users})
 
 
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,31}$")
+
+
+def _validate_username(username):
+    if not username or not USERNAME_RE.match(username) or username == "root":
+        raise ValueError(
+            "Invalid username (use 1-32 letters, digits, '.', '_' or '-', not 'root')")
+
+
 def ssh_add(username, password, days, quota_gb, ip_limit):
+    _validate_username(username)
     users = load_ssh()
     if username in users:
         raise ValueError(f"SSH user '{username}' already exists")
@@ -442,6 +469,18 @@ def gen_zivpn_config():
     }
 
 
+def gen_udp_custom_config():
+    """Mirror enabled, non-expired SSH accounts into UDP Custom's auth list."""
+    creds = [f"{u}:{d['password']}" for u, d in sorted(load_ssh().items())
+             if d.get("enabled", True) and not is_expired(d["expiry"])]
+    return {
+        "listen": ":36712",
+        "stream_buffer": 33554432,
+        "receive_buffer": 83886080,
+        "auth": {"mode": "passwords", "config": creds},
+    }
+
+
 # --------------------------------------------------------------------------
 # Share links
 # --------------------------------------------------------------------------
@@ -546,9 +585,15 @@ def ip_limit_exceeded(distinct_ips, ip_limit):
 
 
 def enforcement_plan(ssh_users, xray_users, live_ips):
-    """Return {action-list} for expired / over-quota / over-IP users."""
+    """Return {action-list} for expired / over-quota / over-IP users.
+
+    Already-disabled accounts are skipped so the 1-minute timer does not
+    repeatedly rewrite configs and restart Xray / sing-box / ZIVPN.
+    """
     plan = []
     for name, u in ssh_users.items():
+        if not u.get("enabled", True):
+            continue
         if is_expired(u["expiry"]):
             plan.append({"kind": "ssh", "user": name, "action": "lock", "reason": "expired"})
         elif quota_exceeded(u.get("used_bytes", 0), u.get("quota_gb", 0)):
@@ -557,6 +602,8 @@ def enforcement_plan(ssh_users, xray_users, live_ips):
             plan.append({"kind": "ssh", "user": name, "action": "kick-extra",
                          "reason": "ip-limit"})
     for name, u in xray_users.items():
+        if not u.get("enabled", True):
+            continue
         if is_expired(u["expiry"]):
             plan.append({"kind": "xray", "user": name, "action": "remove", "reason": "expired"})
         elif quota_exceeded(u.get("used_bytes", 0), u.get("quota_gb", 0)):
@@ -735,11 +782,18 @@ def ssh_live_users():
 
 def ssh_live_counts():
     """{panel SSH user: live established-session count} right now."""
-    out = subprocess.run("ss -tnp state established 2>/dev/null", shell=True,
+    out = subprocess.run(["ss", "-tnp", "state", "established"],
                          capture_output=True, text=True).stdout
     panel = set(load_ssh())
+    pid_cache = {}
+
+    def cached_pid_user(pid):
+        if pid not in pid_cache:
+            pid_cache[pid] = _pid_to_user(pid)
+        return pid_cache[pid]
+
     return {u: n for u, n in
-            parse_ssh_live_counts(out, _pid_to_user).items() if u in panel}
+            parse_ssh_live_counts(out, cached_pid_user).items() if u in panel}
 
 
 def xray_last_seen_map():
@@ -793,6 +847,15 @@ def online_users():
             "ssh_online": ssh, "xray_online": xray}
 
 
+def dashboard_summary():
+    """Single-shot payload for menu.sh / webpanel dashboard headers."""
+    return {
+        "stats": stats(),
+        "online": online_users(),
+        "bandwidth": bandwidth(),
+    }
+
+
 # --------------------------------------------------------------------------
 # System side effects (only used by the on-VPS wrapper commands)
 # --------------------------------------------------------------------------
@@ -800,22 +863,57 @@ def _run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 
-def apply_configs():
-    _write_json(os.path.join(BASE, "xray", "config.json"), gen_xray_config())
-    _write_json(os.path.join(BASE, "sing-box", "config.json"), gen_singbox_config())
-    _write_json(os.path.join(BASE, "zivpn", "config.json"), gen_zivpn_config())
-    _run("systemctl restart xray 2>/dev/null; systemctl restart sing-box 2>/dev/null; "
-         "systemctl restart zivpn 2>/dev/null; true")
+def sync_udp_custom(force_restart=False):
+    changed = _write_json_if_changed(
+        os.path.join(BASE, "udp", "config.json"), gen_udp_custom_config())
+    if changed or force_restart:
+        subprocess.run(["systemctl", "restart", "udp-custom"],
+                       capture_output=True, text=True)
+    return changed
+
+
+def apply_configs(force_restart=False):
+    """Write service configs and restart ONLY daemons whose config changed."""
+    targets = [
+        ("xray", os.path.join(BASE, "xray", "config.json"), gen_xray_config()),
+        ("sing-box", os.path.join(BASE, "sing-box", "config.json"), gen_singbox_config()),
+        ("zivpn", os.path.join(BASE, "zivpn", "config.json"), gen_zivpn_config()),
+        ("udp-custom", os.path.join(BASE, "udp", "config.json"), gen_udp_custom_config()),
+    ]
+    to_restart = []
+    for svc, path, cfg in targets:
+        changed = _write_json_if_changed(path, cfg)
+        if changed or (force_restart and svc != "udp-custom"):
+            to_restart.append(svc)
+    if to_restart:
+        subprocess.run(["systemctl", "restart", *to_restart],
+                       capture_output=True, text=True)
 
 
 def sync_linux_user(username, password, expiry, enabled=True):
     """Create/update the real Linux account behind an SSH DB record."""
-    exists = _run(f"id {username} >/dev/null 2>&1").returncode == 0
+    _validate_username(username)
+    exists = subprocess.run(["id", username],
+                            capture_output=True, text=True).returncode == 0
     if not exists:
-        _run(f"useradd -m -s /bin/false -e {expiry} {username}")
-    _run(f"echo '{username}:{password}' | chpasswd")
-    _run(f"chage -E {expiry} {username}")
-    _run(f"usermod {'-U' if enabled else '-L'} {username}")
+        subprocess.run(["useradd", "-m", "-s", "/bin/false",
+                        "-e", str(expiry), username],
+                       capture_output=True, text=True)
+    subprocess.run(["chpasswd"], input=f"{username}:{password}\n",
+                   capture_output=True, text=True)
+    subprocess.run(["chage", "-E", str(expiry), username],
+                   capture_output=True, text=True)
+    subprocess.run(["usermod", "-U" if enabled else "-L", username],
+                   capture_output=True, text=True)
+    sync_udp_custom()
+
+
+def delete_linux_user(username):
+    """Remove Linux account and sync UDP Custom auth list."""
+    _validate_username(username)
+    subprocess.run(["userdel", "-r", "--", username],
+                   capture_output=True, text=True)
+    sync_udp_custom()
 
 
 # --------------------------------------------------------------------------
@@ -895,10 +993,12 @@ def fmt_users(users, title="SSH USERS"):
 
 
 def _card(title, rows):
-    """A bordered two-column table for one user's details."""
+    """A Unicode-bordered two-column table for one user's details."""
     lw, vw = 16, 29
-    edge = "+" + "-" * (lw + 2) + "+" + "-" * (vw + 2) + "+"
-    lines = [edge, f"| {title:<{lw + vw + 3}} |", edge]
+    top = "┌" + "─" * (lw + vw + 5) + "┐"
+    mid = "├" + "─" * (lw + 2) + "┬" + "─" * (vw + 2) + "┤"
+    bot = "└" + "─" * (lw + 2) + "┴" + "─" * (vw + 2) + "┘"
+    lines = [top, f"│ {title[:lw + vw + 3]:<{lw + vw + 3}} │", mid]
     for label, value in rows:
         chunks = []
         text = str(value)
@@ -906,9 +1006,9 @@ def _card(title, rows):
             chunks.append(text[:vw])
             text = text[vw:]
         for i, chunk in enumerate(chunks or [""]):
-            lines.append(f"| {(label if i == 0 else ''):<{lw}} "
-                         f"| {chunk:<{vw}} |")
-    lines.append(edge)
+            lines.append(f"│ {(label if i == 0 else ''):<{lw}} "
+                         f"│ {chunk:<{vw}} │")
+    lines.append(bot)
     return "\n".join(lines)
 
 
@@ -916,7 +1016,8 @@ def fmt_zivpn_users(users):
     if not users:
         return "No users yet."
     cols = [("NAME", 23), ("EXPIRES", 12), ("LEFT", 6)]
-    body = [(n, u.get("expiry") or "-", f"{u['days_left']}d")
+    body = [(n, u.get("expiry") or "-",
+             "off" if not u.get("enabled", True) else f"{u['days_left']}d")
             for n, u in users.items()]
     return _bordered_table(f"ZIVPN USERS ({len(users)})", cols, body)
 
@@ -996,7 +1097,8 @@ def _list_rows(kind):
                     "live": "active" if n in seen
                     and now - seen[n] <= XRAY_ONLINE_WINDOW else "-"}
                 for n, u in load_xray().items()}
-    return {n: {"expiry": u["expiry"], "days_left": days_left(u["expiry"])}
+    return {n: {"expiry": u["expiry"], "days_left": days_left(u["expiry"]),
+                "enabled": u.get("enabled", True)}
             for n, u in load_zivpn().items()}
 
 
@@ -1039,7 +1141,7 @@ def main(argv):
             sync_linux_user(args[0], u["password"], u["expiry"], u.get("enabled", True))
             print(f"SSH user '{args[0]}' saved.\n\n{fmt_ssh_info(args[0])}")
         elif cmd == "ssh-del":
-            ssh_del(args[0]); _run(f"userdel -r {args[0]} 2>/dev/null; true")
+            ssh_del(args[0]); delete_linux_user(args[0])
             print(f"SSH user '{args[0]}' deleted.")
         elif cmd == "ssh-list":
             data = _list_rows("ssh")
@@ -1086,6 +1188,25 @@ def main(argv):
         elif cmd == "zivpn-add":
             zivpn_add(args[0], args[1], int(args[2])); apply_configs()
             print(f"ZIVPN user '{args[0]}' created.")
+        elif cmd == "zivpn-edit":
+            kw = {}
+            i = 1
+            while i < len(args):
+                k = args[i].lstrip("-").replace("-", "_")
+                if k == "days":
+                    kw["days"] = int(args[i + 1]); i += 2
+                elif k == "password":
+                    kw["password"] = args[i + 1]; i += 2
+                elif k == "extend":
+                    kw["extend"] = True; i += 1
+                elif k == "enable":
+                    kw["enable"] = True; i += 1
+                elif k == "disable":
+                    kw["enable"] = False; i += 1
+                else:
+                    i += 1
+            zivpn_edit(args[0], **kw); apply_configs()
+            print(f"ZIVPN user '{args[0]}' saved.")
         elif cmd == "zivpn-del":
             zivpn_del(args[0]); apply_configs()
             print(f"ZIVPN user '{args[0]}' deleted.")
@@ -1096,8 +1217,10 @@ def main(argv):
             _p(bandwidth())
         elif cmd == "bandwidth-summary":
             print(bandwidth_summary())
+        elif cmd == "dashboard-json":
+            _p(dashboard_summary())
         elif cmd == "gen-configs":
-            apply_configs(); _p({"ok": True})
+            apply_configs(force_restart=True); _p({"ok": True})
         elif cmd == "stats":
             _p(stats())
         elif cmd == "online":

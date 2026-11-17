@@ -95,55 +95,119 @@ stats_count() {
 }
 
 server_ip() {
-    local f="$RAGNAR_DIR/host"
+    local f="$RAGNAR_DIR/host" ip
     [ -s "$f" ] && cat "$f" && return
-    curl -s4 --max-time 4 https://api.ipify.org || hostname -I | awk '{print $1}'
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -n "$ip" ] || ip=$(curl -s4 --max-time 2 https://api.ipify.org 2>/dev/null || echo "n/a")
+    printf '%s\n' "$ip"
 }
 server_isp() {
-    curl -s --max-time 4 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' \
-        || echo "Unknown"
+    local f="$RAGNAR_DIR/isp" isp
+    if [ -s "$f" ]; then
+        cat "$f"
+        return
+    fi
+    isp=$(curl -s --max-time 2 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' | head -1)
+    if [ -n "$isp" ]; then
+        mkdir -p "$RAGNAR_DIR" 2>/dev/null && printf '%s\n' "$isp" > "$f" 2>/dev/null || true
+        printf '%s\n' "$isp"
+    else
+        echo "Unknown"
+    fi
+}
+cpu_usage_pct() {
+    if [ -r /proc/stat ]; then
+        local u1 n1 s1 i1 w1 q1 sq1 st1 u2 n2 s2 i2 w2 q2 sq2 st2 _
+        read -r _ u1 n1 s1 i1 w1 q1 sq1 st1 _ < /proc/stat
+        read -t 0.04 _ < <(sleep 0.04) 2>/dev/null || sleep 0.04
+        read -r _ u2 n2 s2 i2 w2 q2 sq2 st2 _ < /proc/stat
+        awk -v t1="$((u1+n1+s1+i1+w1+q1+sq1+st1))" -v id1="$((i1+w1))" \
+            -v t2="$((u2+n2+s2+i2+w2+q2+sq2+st2))" -v id2="$((i2+w2))" \
+            'BEGIN { dt=t2-t1; if (dt>0) printf "%.1f%%", (dt-(id2-id1))*100/dt; else print "0.0%" }'
+    else
+        echo "n/a"
+    fi
 }
 
 print_header() {
     clear_screen
     local ip isp os up cpu ram disk now
     ip=$(server_ip); isp=$(server_isp)
-    os=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2)
+    os=$(awk -F= '/^PRETTY_NAME=/ {gsub(/"/, "", $2); print $2; exit}' /etc/os-release 2>/dev/null)
     up=$(uptime -p 2>/dev/null | sed 's/^up //')
-    cpu=$(top -bn1 2>/dev/null | awk '/Cpu/ {print 100-$8"%"}' | head -1)
-    ram=$(free -m | awk '/Mem:/ {printf "%sMB / %sMB", $3, $2}')
-    disk=$(df -h / | awk 'NR==2 {printf "%s/%s", $3, $2}')
+    cpu=$(cpu_usage_pct)
+    ram=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {if (t>0) printf "%dMB / %dMB (%.0f%%)", (t-a)/1024, t/1024, (t-a)*100/t}' /proc/meminfo 2>/dev/null)
+    disk=$(df -Ph / 2>/dev/null | awk 'NR==2 {if ($2 == "0" || $2 == "0B") printf "%s used", $3; else printf "%s / %s (%s)", $3, $2, $5}')
     now=$(date '+%d-%m-%Y %T')
-    echo -e "${P2}${B}   RAGNAR VPS PANEL${N}"
-    echo -e "${C}   Telegram : ${W}@farisbazed${C}   Channel : ${W}https://t.me/ragnaresim${N}"
+
+    # Single Python call for bandwidth + user stats + online count
+    local dash_tsv bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online
+    dash_tsv=$(python3 - "$CORE" <<'PY' 2>/dev/null
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ragnar", sys.argv[1])
+r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
+d = r.dashboard_summary()
+bw, st, on = d["bandwidth"], d["stats"], d["online"]
+t = (bw.get("today") or {}).get("total_f", "n/a")
+m = (bw.get("month") or {}).get("total_f", "n/a")
+src = bw.get("source") or ""
+print("\t".join(str(x) for x in [
+    t, m, src if src != "vnstat" else "",
+    st.get("vmess", 0), st.get("vless", 0), st.get("trojan", 0),
+    st.get("ssws", 0), st.get("ssh", 0), st.get("zivpn", 0),
+    st.get("total", 0), on.get("online", 0)
+]))
+PY
+)
+    IFS=$'\t' read -r bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online <<<"$dash_tsv"
+
+    # Single batched systemctl call for all header services
+    local -a units=(xray haproxy dropbear sing-box udp-custom zivpn ragnar-wsproxy slowdns badvpn-udpgw ragnar-web cloudflared)
+    local -a states=()
+    mapfile -t states < <(systemctl is-active "${units[@]}" 2>/dev/null || true)
+    declare -A svc_map=()
+    local idx key
+    for idx in "${!units[@]}"; do
+        key="${units[$idx]}"
+        if [ "${states[$idx]:-inactive}" = "active" ]; then
+            svc_map["$key"]="${G}$(printf '%-15s' '● ONLINE')${N}"
+        else
+            svc_map["$key"]="${R}$(printf '%-15s' '● OFFLINE')${N}"
+        fi
+    done
+    if [ "${states[10]:-inactive}" != "active" ] \
+       && [ ! -f /etc/systemd/system/cloudflared.service ] \
+       && [ ! -f /lib/systemd/system/cloudflared.service ]; then
+        svc_map["cloudflared"]="${Y}$(printf '%-15s' '● NO TUNNEL')${N}"
+    fi
+
+    echo -e "${P2}${B}  RAGNAR VPS PANEL${N}"
+    echo -e "${C}  Telegram : ${W}@farisbazed${C}   Channel : ${W}https://t.me/ragnaresim${N}"
     bar "SERVER INFO"
-    kv "IP" "$ip";        kv "ISP" "$isp";       kv "OS" "$os"
-    kv "UPTIME" "$up";    kv "CPU USAGE" "${cpu:-n/a}"
-    kv "RAM USAGE" "$ram"; kv "DISK USAGE" "$disk"; kv "SERVER TIME" "$now"
-    # bandwidth: measured totals via the core (vnstat --json for the WAN
-    # interface, matched by date - never positional fields; kernel
-    # counters since boot as a labelled fallback)
+    kv "IP" "${ip:-n/a}";     kv "ISP" "${isp:-Unknown}"; kv "OS" "${os:-Linux}"
+    kv "UPTIME" "${up:-n/a}"; kv "CPU USAGE" "${cpu:-n/a}"
+    kv "RAM USAGE" "${ram:-n/a}"; kv "DISK USAGE" "${disk:-n/a}"; kv "SERVER TIME" "$now"
+
     bar "BANDWIDTH"
-    bandwidth_lines
-    # user stats
-    local stats total online
-    stats=$(python3 "$CORE" stats 2>/dev/null)
-    get() { echo "$stats" | grep -o "\"$1\": [0-9]*" | grep -o '[0-9]*$'; }
-    total=$(get total); online=$(python3 "$CORE" online 2>/dev/null | grep -o '"online": [0-9]*' | grep -o '[0-9]*$')
+    printf "  ${C}%-14s${W}: ${G}%-16s${C}%-14s${W}: ${G}%s${N}\n" \
+        "TODAY" "${bw_today:-n/a}" "MONTH" "${bw_month:-n/a}"
+    [ -z "${bw_src:-}" ] || printf "  ${DIM}(bandwidth source: %s)${N}\n" "$bw_src"
+
     bar "USER STATS"
-    printf "${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-9s${W}: ${G}%s${N}\n" \
-        "VMESS" "$(get vmess)" "VLESS" "$(get vless)" "TROJAN" "$(get trojan)"
-    printf "${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-9s${W}: ${G}%s${N}\n" \
-        "SSWS" "$(get ssws)" "SSH" "$(get ssh)" "ZIVPN" "$(get zivpn)"
-    printf "${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
-        "TOTAL" "${total:-0}" "ONLINE" "${online:-0}"
+    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
+        "VMESS" "${s_vmess:-0}" "VLESS" "${s_vless:-0}" "TROJAN" "${s_trojan:-0}"
+    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
+        "SSWS" "${s_ssws:-0}" "SSH" "${s_ssh:-0}" "ZIVPN" "${s_zivpn:-0}"
+    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
+        "TOTAL" "${s_total:-0}" "ONLINE" "${s_online:-0}"
+
     bar "SERVICE"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "XRAY" "$(svc_dot xray)" "HAPROXY" "$(svc_dot haproxy)"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "DROPBEAR" "$(svc_dot dropbear)" "SING-BOX" "$(svc_dot sing-box)"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "UDP CUSTOM" "$(svc_dot udp-custom)" "UDP ZIVPN" "$(svc_dot zivpn)"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "SSH WS" "$(svc_dot ragnar-wsproxy)" "WSS / SSL" "$(svc_dot haproxy)"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "SLOWDNS" "$(svc_dot slowdns)" "BADVPN" "$(svc_dot badvpn-udpgw)"
-    printf "${C}%-13s${W}: %-22s${C}%-13s${W}: %s${N}\n" "CLOUDFLARED" "$(svc_dot_cf)" "" ""
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "XRAY" "${svc_map[xray]}" "HAPROXY" "${svc_map[haproxy]}"
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "DROPBEAR" "${svc_map[dropbear]}" "SING-BOX" "${svc_map[sing-box]}"
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "UDP CUSTOM" "${svc_map[udp-custom]}" "UDP ZIVPN" "${svc_map[zivpn]}"
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}"
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "SLOWDNS" "${svc_map[slowdns]}" "BADVPN" "${svc_map[badvpn-udpgw]}"
+    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "CLOUDFLARED" "${svc_map[cloudflared]}" "WEB PANEL" "${svc_map[ragnar-web]}"
 }
 
 main_menu() {
@@ -358,6 +422,29 @@ xray_menu() {
 # ---------------------------------------------------------------------
 # UDP ZIVPN / UDP Custom / SlowDNS / Cloudflared
 # ---------------------------------------------------------------------
+zivpn_edit() {
+    local u what v
+    read -rp "Username to edit: " u
+    page_header "EDIT ZIVPN ACCOUNT" "Update password, expiry or access."
+    echo "  Account: ${u:-<not set>}"
+    section "ACCOUNT SETTINGS"
+    opt 1 "Renew / extend expiry" "Add days to the current expiry"
+    opt 2 "Change password" "Password input is hidden"
+    opt 3 "Enable account" "Allow UDP ZIVPN access"
+    opt 4 "Disable account" "Block UDP ZIVPN access"
+    opt 0 "Cancel" "Return without changes"
+    menu_choice "Select an option:" || return
+    what=$MENU_CHOICE
+    case $what in
+        1) read -rp "Add how many days? " v; python3 "$CORE" zivpn-edit "$u" --days "$v" --extend ;;
+        2) read -rsp "New password: " v; echo; python3 "$CORE" zivpn-edit "$u" --password "$v" ;;
+        3) python3 "$CORE" zivpn-edit "$u" --enable ;;
+        4) python3 "$CORE" zivpn-edit "$u" --disable ;;
+        0) return ;;
+        *) invalid_choice; return ;;
+    esac
+    pause
+}
 zivpn_menu() {
     while true; do
         page_header "UDP ZIVPN" "Password-based UDP access. Main service listens on UDP 5667."
@@ -365,10 +452,11 @@ zivpn_menu() {
         section "ACCOUNTS"
         opt 1 "Create user" "Add a password and expiry"
         opt 2 "List users" "Review usernames and expiry dates"
-        opt 3 "Delete user" "Remove one ZIVPN account"
+        opt 3 "Edit / renew user" "Extend expiry, change password or toggle access"
+        opt 4 "Delete user" "Remove one ZIVPN account"
         section "SERVICE"
-        opt 4 "Server details" "Port and redirect range"
-        opt 5 "Restart service" "Apply the current ZIVPN configuration"
+        opt 5 "Server details" "Port and redirect range"
+        opt 6 "Restart service" "Apply the current ZIVPN configuration"
         opt 0 "Back" "Return to the dashboard"
         menu_choice "Select an option:" || return
         c=$MENU_CHOICE
@@ -376,10 +464,11 @@ zivpn_menu() {
             1) read -rp "Name: " u; read -rsp "Password: " p; echo; read -rp "Days: " d
                python3 "$CORE" zivpn-add "$u" "$p" "${d:-30}"; pause ;;
             2) python3 "$CORE" zivpn-list; pause ;;
-            3) read -rp "Name: " u; python3 "$CORE" zivpn-del "$u"; pause ;;
-            4) echo "Server : $(server_ip):5667 (UDP, range 6000-19999 redirected)"
+            3) zivpn_edit ;;
+            4) read -rp "Name: " u; python3 "$CORE" zivpn-del "$u"; pause ;;
+            5) echo "Server : $(server_ip):5667 (UDP, range 6000-19999 redirected)"
                echo "Obfs   : zivpn   -   passwords are per-user, see list"; pause ;;
-            5) systemctl restart zivpn; echo restarted; pause ;;
+            6) systemctl restart zivpn; echo restarted; pause ;;
             0) return ;;
             *) invalid_choice ;;
         esac
@@ -412,12 +501,23 @@ slowdns_menu() {
     local SD="$RAGNAR_DIR/slowdns"
     while true; do
         page_header "SLOWDNS / DNSTT" "DNS-tunnel settings and diagnostics. Changes update the service configuration."
-        local ns pub mtu resolver target
-        ns=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('ns',''))" 2>/dev/null)
-        pub=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('slowdns_pubkey',''))" 2>/dev/null)
-        mtu=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('slowdns_mtu',1232))" 2>/dev/null)
-        resolver=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('slowdns_resolver',''))" 2>/dev/null)
-        target=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('slowdns_target',22))" 2>/dev/null)
+        local sd_tsv ns pub mtu resolver target
+        sd_tsv=$(python3 - "$RAGNAR_DIR/settings.json" <<'PY' 2>/dev/null
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except Exception:
+    s = {}
+print("\t".join(str(x) for x in [
+    s.get("ns", ""),
+    s.get("slowdns_pubkey", ""),
+    s.get("slowdns_mtu", 1232),
+    s.get("slowdns_resolver", ""),
+    s.get("slowdns_target", 22),
+]))
+PY
+)
+        IFS=$'\t' read -r ns pub mtu resolver target <<<"$sd_tsv"
         mtu=${mtu:-1232}; target=${target:-22}
         echo "Nameserver : ${ns:-not set}"
         echo "Public key : ${pub:-not generated}"
@@ -625,9 +725,18 @@ update_panel() {
 }
 status_page() {
     page_header "STATUS & HEALTH" "Current service state, bandwidth and listening ports."
-    for s in haproxy xray sing-box ragnar-wsproxy dropbear ssh zivpn udp-custom \
-             badvpn-udpgw slowdns cloudflared ragnar-web ragnar-watchdog.timer; do
-        printf "${C}%-24s${W}: %s${N}\n" "$s" "$(svc_dot $s)"
+    local -a units=(haproxy xray sing-box ragnar-wsproxy dropbear ssh zivpn udp-custom \
+                    badvpn-udpgw slowdns cloudflared ragnar-web ragnar-check.timer ragnar-watchdog.timer)
+    local -a states=()
+    mapfile -t states < <(systemctl is-active "${units[@]}" 2>/dev/null || true)
+    local i st_txt
+    for i in "${!units[@]}"; do
+        if [ "${states[$i]:-inactive}" = "active" ]; then
+            st_txt="${G}● ONLINE${N}"
+        else
+            st_txt="${R}● OFFLINE${N}"
+        fi
+        printf "  ${C}%-24s${W}: %b\n" "${units[$i]}" "$st_txt"
     done
     echo; bar "BANDWIDTH"; bandwidth_lines
     echo; ss -tulnp 2>/dev/null | grep -E ':(80|443|22|109|5667|36712|53|8446)\b' || true

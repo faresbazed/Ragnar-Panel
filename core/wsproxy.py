@@ -33,20 +33,51 @@ import struct
 import sys
 import threading
 
+def _parse_backends(raw):
+    out = []
+    for item in raw.split(","):
+        item = item.strip()
+        if ":" in item:
+            host, port = item.rsplit(":", 1)
+            out.append((host.strip(), int(port)))
+    return out or [("127.0.0.1", 109), ("127.0.0.1", 22)]
+
+
 LISTEN = ("127.0.0.1", int(os.environ.get("RAGNAR_WSPORT", "10005")))
-BACKENDS = [("127.0.0.1", 109), ("127.0.0.1", 22)]  # dropbear, then openssh
+BACKENDS = _parse_backends(
+    os.environ.get("RAGNAR_SSH_BACKENDS", "127.0.0.1:109,127.0.0.1:22"))
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 1 << 20
 FRAME_FIRST_BYTES = {0x80, 0x81, 0x82, 0x88, 0x89, 0x8A}
 
 
+def _set_nodelay(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+
+
+def _xor_mask(payload: bytes, mask: bytes) -> bytes:
+    """Fast stdlib WebSocket frame unmasking via C-level big-int XOR."""
+    n = len(payload)
+    if n == 0:
+        return payload
+    rep = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(payload, "big")
+            ^ int.from_bytes(rep, "big")).to_bytes(n, "big")
+
+
 def recv_exact(sock, n, buf):
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
+    if len(buf) >= n:
+        return bytes(buf[:n]), bytes(buf[n:])
+    acc = bytearray(buf)
+    while len(acc) < n:
+        chunk = sock.recv(min(65536, n - len(acc)))
         if not chunk:
             raise ConnectionError("closed")
-        buf += chunk
-    return buf[:n], buf[n:]
+        acc.extend(chunk)
+    return bytes(acc[:n]), bytes(acc[n:])
 
 
 def _split_head(data):
@@ -173,7 +204,7 @@ def read_frame(sock, buf):
         mask, buf = recv_exact(sock, 4, buf)
     payload, buf = recv_exact(sock, length, buf)
     if masked:
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        payload = _xor_mask(payload, mask)
     return opcode, payload, buf
 
 
@@ -194,6 +225,7 @@ def connect_backend():
         try:
             s = socket.create_connection(addr, timeout=5)
             s.settimeout(None)
+            _set_nodelay(s)
             return s
         except OSError as exc:
             last = exc
@@ -202,6 +234,7 @@ def connect_backend():
 
 def handle(client):
     backend = None
+    _set_nodelay(client)
     try:
         path, headers, rest, chained = read_request(client)
         # Lenient by design: ANY request head gets a 101 and a tunnel.
@@ -246,7 +279,10 @@ def handle(client):
                 while not stop.is_set():
                     if backend.fileno() < 0:
                         break
-                    r, _, _ = select.select([backend], [], [], 0.05)
+                    # Only poll quickly while mode is undecided (<=300 ms);
+                    # once decided, relax timeout 40x to avoid idle CPU burn.
+                    wait_s = 0.05 if mode["framed"] is None else 2.0
+                    r, _, _ = select.select([backend], [], [], wait_s)
                     if backend in r:
                         data = backend.recv(65536)
                         if not data:
@@ -324,9 +360,16 @@ def handle(client):
     except (ConnectionError, OSError, ValueError):
         pass
     finally:
+        stop_fn = locals().get("stop")
+        if stop_fn is not None:
+            stop_fn.set()
         for s in (client, backend):
             try:
                 if s:
+                    try:
+                        s.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
                     s.close()
             except OSError:
                 pass
@@ -336,7 +379,7 @@ def main():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(LISTEN)
-    srv.listen(128)
+    srv.listen(1024)
     print(f"ragnar wsproxy (hybrid) listening on {LISTEN[0]}:{LISTEN[1]}", flush=True)
     while True:
         client, _ = srv.accept()

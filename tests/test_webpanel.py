@@ -44,9 +44,11 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
             [sys.executable, os.path.join(ROOT, "web", "webpanel.py")],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True)
+        no_proxy_opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}))
         for _ in range(50):
             try:
-                urllib.request.urlopen(BASE_URL + "/login", timeout=1)
+                no_proxy_opener.open(BASE_URL + "/login", timeout=1).close()
                 break
             except Exception:
                 time.sleep(0.2)
@@ -58,10 +60,13 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
     def tearDownClass(cls):
         cls.proc.terminate()
         cls.proc.wait(timeout=5)
+        if cls.proc.stdout:
+            cls.proc.stdout.close()
 
     def opener(self):
         cj = http.cookiejar.CookieJar()
         return urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
             urllib.request.HTTPCookieProcessor(cj))
 
     def login(self, op):
@@ -167,6 +172,50 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
                       'name="password"', 'name="enabled"'):
             self.assertIn(field, page)
 
+    def test_api_status_ssh_info_and_quick_actions(self):
+        import gzip
+        import json
+        import urllib.parse
+        op = self.opener()
+        self.login(op)
+        # /api/status JSON telemetry
+        raw = op.open(BASE_URL + "/api/status").read().decode()
+        payload = json.loads(raw)
+        self.assertIn("info", payload)
+        self.assertIn("services", payload)
+        self.assertIn("stats", payload)
+        self.assertIn("cpu_pct", payload["info"])
+        # /ssh/info connection sheet
+        info_page = op.open(BASE_URL + "/ssh/info?u=webuser").read().decode()
+        self.assertIn("Connection details for webuser", info_page)
+        self.assertIn("HTTP Custom / NPV Payload", info_page)
+        # gzip compression when requested
+        req = urllib.request.Request(
+            BASE_URL + "/", headers={"Accept-Encoding": "gzip"})
+        with op.open(req) as resp:
+            self.assertEqual(resp.headers.get("Content-Encoding"), "gzip")
+            html_body = gzip.decompress(resp.read()).decode()
+            self.assertIn("Dashboard", html_body)
+        # +30d renew30 and disable/enable on a dedicated zivpn user
+        zpage = op.open(BASE_URL + "/zivpn").read().decode()
+        csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', zpage).group(1)
+        op.open(BASE_URL + "/zivpn/action", data=urllib.parse.urlencode(
+            {"csrf": csrf, "op": "create", "user": "zquick",
+             "password": "zpw99999", "days": "10"}).encode())
+        zpage_off = op.open(BASE_URL + "/zivpn/action",
+                            data=urllib.parse.urlencode(
+                                {"csrf": csrf, "op": "disable",
+                                 "user": "zquick"}).encode()).read().decode()
+        self.assertIn(">disabled<", zpage_off)
+        op.open(BASE_URL + "/zivpn/action", data=urllib.parse.urlencode(
+            {"csrf": csrf, "op": "enable", "user": "zquick"}).encode())
+        zpage_ext = op.open(BASE_URL + "/zivpn/action",
+                            data=urllib.parse.urlencode(
+                                {"csrf": csrf, "op": "renew30",
+                                 "user": "zquick"}).encode()).read().decode()
+        self.assertIn("extended by 30 days", zpage_ext)
+        self.assertIn("40d", zpage_ext)
+
     def test_base_path_mode(self):
         """The HAProxy-fronted setup: app under /panel, loopback, HTTP."""
         import urllib.parse
@@ -178,12 +227,14 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
             [sys.executable, os.path.join(ROOT, "web", "webpanel.py")],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True)
+        no_proxy_opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}))
         try:
             base = "http://127.0.0.1:18100/panel"
             for _ in range(50):
                 try:
-                    page = urllib.request.urlopen(base + "/login",
-                                                  timeout=1).read().decode()
+                    page = no_proxy_opener.open(base + "/login",
+                                                timeout=1).read().decode()
                     break
                 except Exception:
                     time.sleep(0.2)
@@ -203,6 +254,8 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
         finally:
             proc.terminate()
             proc.wait(timeout=5)
+            if proc.stdout:
+                proc.stdout.close()
 
 
 if __name__ == "__main__":

@@ -69,6 +69,21 @@ class TestSocketAccounting(unittest.TestCase):
         self.assertEqual(
             state["dns-user|127.0.0.1:109|127.0.0.1:51235"], [100, 200])
 
+    def test_live_ips_and_kick_isolation(self):
+        # channel has client 1.2.3.4 (pid 55) + outbound forwarded 9.9.9.9
+        # plus second client 8.8.4.4 (pid 56); haproxy is pid 9; fares is 1234.
+        C._pid_user = lambda pid: {1234: "fares", 55: "channel", 56: "channel",
+                                   999: "root", 9: "haproxy"}.get(pid)
+        sample = SS_SAMPLE + (
+            '0 0 10.0.0.5:22 8.8.4.4:6000 users:(("sshd",pid=56,fd=3),("sshd",pid=999,fd=3))\n'
+        )
+        live = C.ssh_live_ips(sample)
+        # 9.9.9.9:443 is outbound (local port 53100), NOT a client source IP!
+        self.assertEqual(live[("ssh", "channel")], ["1.2.3.4", "8.8.4.4"])
+        # Kicking channel's extra IPs keeping {"1.2.3.4"} must ONLY return [56]
+        # — never haproxy (pid 9), root (pid 999), or fares (pid 1234).
+        self.assertEqual(C.pids_to_kick(sample, "channel", {"1.2.3.4"}), [56])
+
 
 if __name__ == "__main__":
     unittest.main()

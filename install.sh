@@ -153,6 +153,8 @@ if git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
         > "$BASE/version"
 fi
 echo "$PUBIP" > "$BASE/host"
+ISP_NAME=$(curl -s --max-time 4 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' || true)
+[ -n "$ISP_NAME" ] && echo "$ISP_NAME" > "$BASE/isp"
 [ -n "$DOMAIN" ] && echo "$DOMAIN" > "$BASE/domain"
 python3 - "$DOMAIN" "$NS" <<'PY'
 import json, os, sys

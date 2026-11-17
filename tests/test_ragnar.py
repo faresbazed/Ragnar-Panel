@@ -120,6 +120,16 @@ plan = ragnar.enforcement_plan(
     {"old": {"expiry": "2000-01-01", "quota_gb": 0, "used_bytes": 0, "ip_limit": 0}},
     {}, {})
 check("expiry plan locks ssh", plan and plan[0]["action"] == "lock")
+plan_disabled = ragnar.enforcement_plan(
+    {"old": {"expiry": "2000-01-01", "quota_gb": 0, "used_bytes": 0,
+             "ip_limit": 0, "enabled": False}},
+    {"xold": {"expiry": "2000-01-01", "quota_gb": 0, "used_bytes": 0,
+              "ip_limit": 0, "enabled": False}}, {})
+check("enforcement skips already-disabled accounts (no restart storm)",
+      plan_disabled == [], str(plan_disabled))
+ucfg = ragnar.gen_udp_custom_config()
+check("udp-custom config mirrors active ssh users",
+      "alice:secret1" in ucfg["auth"]["config"], str(ucfg))
 
 st = ragnar.stats()
 check("stats counts", st["ssh"] == 1 and st["vless"] == 2 and st["zivpn"] == 1
@@ -171,12 +181,12 @@ check("display: fmt_users is a table, not JSON",
       and "{" not in _tab)
 _info = ragnar.fmt_ssh_info("alice") if "alice" in ragnar.load_ssh() else ""
 check("display: fmt_ssh_info is a bordered table",
-      _info == "" or ("SSH USER: alice" in _info and _info.startswith("+")
+      _info == "" or ("SSH USER: alice" in _info and _info.startswith("┌")
                       and "Used" in _info and "{" not in _info))
 _xinfo = ragnar.fmt_xray_info("bob")
 check("display: fmt_xray_info is a bordered table with usage",
       "XRAY USER: bob" in _xinfo and "Used" in _xinfo
-      and "Activity" in _xinfo and _xinfo.startswith("+"))
+      and "Activity" in _xinfo and _xinfo.startswith("┌"))
 _tab2 = ragnar.fmt_users({"bob": {"expiry": "2027-01-01", "days_left": 30,
                                   "quota_gb": 100, "ip_limit": 3,
                                   "enabled": True,
