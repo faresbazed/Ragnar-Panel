@@ -38,16 +38,70 @@ case " $ID ${ID_LIKE:-} " in
     *) warn "Tested on Ubuntu/Debian - continuing anyway" ;;
 esac
 
+IS_UPDATE=0
+if [ "${RAGNAR_UPDATE:-0}" = "1" ] || [ -n "${RAGNAR_UPDATE_COPY:-}" ] || [ -f "$BASE/core/ragnar.py" ]; then
+    IS_UPDATE=1
+fi
+
 # ---------------------------------------------------------------------
-# Questions
+# Install / replace all panel code files FIRST so updates always land
+# even if a third-party apt repository or optional network fetch fails.
+# ---------------------------------------------------------------------
+mkdir -p "$BASE"/{db,core,certs,xray,sing-box,zivpn,udp,slowdns,web}
+rm -rf "$BASE/core/__pycache__" "$BASE/web/__pycache__"
+install -m 755 "$SRC/core/ragnar.py"        "$BASE/core/ragnar.py"
+install -m 755 "$SRC/core/checker.py"       "$BASE/core/checker.py"
+install -m 755 "$SRC/core/wsproxy.py"       "$BASE/core/wsproxy.py"
+install -m 755 "$SRC/core/install-state.sh" "$BASE/core/install-state.sh"
+install -m 755 "$SRC/core/watchdog.sh"      "$BASE/core/watchdog.sh"
+install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
+install -m 755 "$SRC/core/update.sh"        "$BASE/core/update.sh"
+install -m 755 "$SRC/menu.sh"               "$BASE/menu.sh"
+install -m 755 "$SRC/uninstall.sh"          "$BASE/uninstall.sh"
+install -m 755 "$SRC/web/webpanel.py"       "$BASE/web/webpanel.py"
+ragnar_backup_file /usr/local/bin/menu || die "Cannot preserve existing menu command"
+ragnar_backup_file /usr/local/bin/ragnar || die "Cannot preserve existing ragnar command"
+rm -f /usr/local/bin/menu /usr/local/bin/ragnar
+ln -s "$BASE/menu.sh" /usr/local/bin/menu
+ln -s "$BASE/menu.sh" /usr/local/bin/ragnar
+
+# Record the installed code version (from git checkout or GitHub tarball folder name).
+if command -v git >/dev/null 2>&1 && git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
+    printf '%s %s\n' "$(git -C "$SRC" rev-parse HEAD)" "$(date -Is)" > "$BASE/version"
+else
+    _src_base="$(basename "$SRC")"
+    case "$_src_base" in
+        *-*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+            _sha="${_src_base##*-}"
+            if [ "${#_sha}" -ge 7 ]; then
+                printf '%s %s\n' "$_sha" "$(date -Is)" > "$BASE/version"
+            fi
+            ;;
+    esac
+fi
+
+# ---------------------------------------------------------------------
+# Questions (never prompt interactively during an in-place update)
 # ---------------------------------------------------------------------
 DOMAIN="${RAGNAR_DOMAIN:-}"
-if [ -z "$DOMAIN" ] && [ -t 0 ]; then
-    read -rp "Domain pointed at this VPS (blank = use IP, self-signed cert): " DOMAIN
-fi
 NS="${RAGNAR_NS:-}"
-if [ -z "$NS" ] && [ -t 0 ]; then
-    read -rp "SlowDNS nameserver (e.g. ns.yourdomain.com, blank = skip SlowDNS NS): " NS
+if [ "$IS_UPDATE" = 1 ]; then
+    if [ -z "$DOMAIN" ] && [ -f "$BASE/settings.json" ] && command -v python3 >/dev/null 2>&1; then
+        DOMAIN=$(python3 -c 'import json; print((json.load(open("/etc/ragnar/settings.json")).get("domain") or "").strip())' 2>/dev/null || true)
+    fi
+    if [ -z "$DOMAIN" ] && [ -f "$BASE/domain" ]; then
+        DOMAIN=$(head -n1 "$BASE/domain" 2>/dev/null | tr -d '\r\n' || true)
+    fi
+    if [ -z "$NS" ] && [ -f "$BASE/settings.json" ] && command -v python3 >/dev/null 2>&1; then
+        NS=$(python3 -c 'import json; print((json.load(open("/etc/ragnar/settings.json")).get("ns") or "").strip())' 2>/dev/null || true)
+    fi
+else
+    if [ -z "$DOMAIN" ] && [ -t 0 ]; then
+        read -rp "Domain pointed at this VPS (blank = use IP, self-signed cert): " DOMAIN
+    fi
+    if [ -z "$NS" ] && [ -t 0 ]; then
+        read -rp "SlowDNS nameserver (e.g. ns.yourdomain.com, blank = skip SlowDNS NS): " NS
+    fi
 fi
 
 PUBIP=$(curl -s4 --max-time 8 https://api.ipify.org || hostname -I | awk '{print $1}')
@@ -58,21 +112,35 @@ log "Installing $PANEL for host $HOST_FOR_LINKS (IP $PUBIP)"
 # Packages + tuning
 # ---------------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
-# Repair a half-finished dpkg state first (a common fresh-VPS landmine:
-# every apt install then fails with "dpkg was interrupted"). Never continue
-# after a failed repair/update; that would leave a partially configured host.
-dpkg --configure -a || die "dpkg configuration failed; fix the package-manager errors above and re-run install.sh"
-apt-get install -f -y || die "apt dependency repair failed; fix the errors above and re-run install.sh"
 # Silence "sudo: unable to resolve host" on hosts without a hosts entry.
 if ! grep -q " $(hostname)" /etc/hosts 2>/dev/null; then
     printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
     printf '127.0.1.1 %s\n' "$(hostname)" >> "$RAGNAR_STATE_DIR/hosts-added"
 fi
-apt-get update || die "apt package-index update failed; check network/repository configuration and re-run install.sh"
-apt-get install -y curl wget unzip tar jq python3 haproxy dropbear \
-    openssh-server vnstat iptables iptables-persistent socat openssl cron \
-    certbot iproute2 net-tools procps ca-certificates gnupg \
-    || die "Package installation failed - fix apt (try: sudo dpkg --configure -a) and re-run install.sh"
+
+NEED_APT=1
+if [ "$IS_UPDATE" = 1 ]; then
+    NEED_APT=0
+    for req_bin in curl wget tar jq python3 haproxy dropbear vnstat iptables socat openssl; do
+        if ! command -v "$req_bin" >/dev/null 2>&1; then
+            NEED_APT=1
+            break
+        fi
+    done
+fi
+
+if [ "$NEED_APT" = 1 ]; then
+    # Repair a half-finished dpkg state first (a common fresh-VPS landmine:
+    # every apt install then fails with "dpkg was interrupted").
+    dpkg --configure -a || [ "$IS_UPDATE" = 1 ] || die "dpkg configuration failed; fix the package-manager errors above and re-run install.sh"
+    apt-get -o DPkg::Lock::Timeout=60 install -f -y || [ "$IS_UPDATE" = 1 ] || die "apt dependency repair failed; fix the errors above and re-run install.sh"
+    apt-get -o DPkg::Lock::Timeout=60 update || [ "$IS_UPDATE" = 1 ] || die "apt package-index update failed; check network/repository configuration and re-run install.sh"
+    apt-get -o DPkg::Lock::Timeout=60 install -y curl wget unzip tar jq python3 haproxy dropbear \
+        openssh-server vnstat iptables iptables-persistent socat openssl cron \
+        certbot iproute2 net-tools procps ca-certificates gnupg \
+        || [ "$IS_UPDATE" = 1 ] || die "Package installation failed - fix apt (try: sudo dpkg --configure -a) and re-run install.sh"
+fi
+
 # Keep a clean persistence baseline before adding panel firewall rules. The
 # package may create rules.v4/rules.v6 during its own setup, so capture those
 # generated defaults too when no file existed before this installation.
@@ -109,10 +177,12 @@ fetch_bin() {
     fi
 }
 # Re-installing over a live panel: stop the services whose binaries are
-# about to be replaced (all units are started again at the end).
-for u in zivpn udp-custom badvpn-udpgw udpgw slowdns xray sing-box ragnar-wsproxy; do
-    systemctl stop "$u" 2>/dev/null || true
-done
+# about to be replaced (all units are restarted at the end).
+if [ "$IS_UPDATE" = 0 ]; then
+    for u in zivpn udp-custom badvpn-udpgw udpgw slowdns xray sing-box ragnar-wsproxy; do
+        systemctl stop "$u" 2>/dev/null || true
+    done
+fi
 mkdir -p /etc/haproxy
 
 ragnar_backup_file /etc/sysctl.d/99-ragnar-tuning.conf || die "Cannot preserve existing sysctl configuration"
@@ -132,29 +202,11 @@ EOF
 fi
 systemctl enable vnstat >/dev/null 2>&1 || true
 
-mkdir -p "$BASE"/{db,core,certs,xray,sing-box,zivpn,udp,slowdns,web}
-install -m 755 "$SRC/core/ragnar.py"   "$BASE/core/ragnar.py"
-install -m 755 "$SRC/core/checker.py"  "$BASE/core/checker.py"
-install -m 755 "$SRC/core/wsproxy.py"  "$BASE/core/wsproxy.py"
-install -m 755 "$SRC/core/install-state.sh" "$BASE/core/install-state.sh"
-install -m 755 "$SRC/core/watchdog.sh" "$BASE/core/watchdog.sh"
-install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
-install -m 755 "$SRC/core/update.sh"   "$BASE/core/update.sh"
-install -m 755 "$SRC/menu.sh"          "$BASE/menu.sh"
-install -m 755 "$SRC/uninstall.sh"     "$BASE/uninstall.sh"
-install -m 755 "$SRC/web/webpanel.py"  "$BASE/web/webpanel.py"
-ragnar_backup_file /usr/local/bin/menu || die "Cannot preserve existing menu command"
-ragnar_backup_file /usr/local/bin/ragnar || die "Cannot preserve existing ragnar command"
-ln -sf "$BASE/menu.sh" /usr/local/bin/menu
-ln -sf "$BASE/menu.sh" /usr/local/bin/ragnar
-# Record the installed code version (used by the self-update check).
-if git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
-    printf '%s %s\n' "$(git -C "$SRC" rev-parse HEAD)" "$(date -Is)" \
-        > "$BASE/version"
+[ -n "$PUBIP" ] && echo "$PUBIP" > "$BASE/host"
+if [ ! -s "$BASE/isp" ]; then
+    ISP_NAME=$(curl -s --max-time 4 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' || true)
+    [ -n "$ISP_NAME" ] && echo "$ISP_NAME" > "$BASE/isp"
 fi
-echo "$PUBIP" > "$BASE/host"
-ISP_NAME=$(curl -s --max-time 4 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' || true)
-[ -n "$ISP_NAME" ] && echo "$ISP_NAME" > "$BASE/isp"
 [ -n "$DOMAIN" ] && echo "$DOMAIN" > "$BASE/domain"
 python3 - "$DOMAIN" "$NS" <<'PY'
 import json, os, sys
@@ -166,55 +218,52 @@ json.dump(s, open(p, "w"), indent=2)
 PY
 
 # ---------------------------------------------------------------------
-# Certificates (Let's Encrypt if the domain resolves here, else self-signed)
+# Certificates (preserve existing certs on update; issue on fresh install)
 # ---------------------------------------------------------------------
-CERT_OK=0
-if [ -n "$DOMAIN" ]; then
-    DIP=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
-    if [ "$DIP" = "$PUBIP" ]; then
-        # certbot --standalone must bind port 80 itself: stop HAProxy if
-        # a previous install left it running (the HAProxy section below
-        # restarts it). Certbot output goes to a log file, never to
-        # /dev/null - a silently swallowed certbot failure cost a real
-        # debugging round on 2026-11-13 (broken python SSL stack on the
-        # box, invisible behind the self-signed fallback).
-        systemctl stop haproxy 2>/dev/null || true
-        : > /tmp/ragnar-certbot.log
-        # Preferred: one cert covering the domain AND anytls.<domain>.
-        # If anytls.<domain> has no DNS record yet the whole order fails,
-        # so fall back to a domain-only cert instead of self-signed.
-        if certbot certonly --standalone --non-interactive --agree-tos \
-                -m "admin@$DOMAIN" -d "$DOMAIN" -d "anytls.$DOMAIN" \
-                >>/tmp/ragnar-certbot.log 2>&1; then
-            CERT_OK=1; log "Let's Encrypt certificate installed (domain + anytls subdomain)"
-        elif certbot certonly --standalone --non-interactive --agree-tos \
-                -m "admin@$DOMAIN" -d "$DOMAIN" >>/tmp/ragnar-certbot.log 2>&1; then
-            CERT_OK=1
-            warn "Let's Encrypt certificate installed for $DOMAIN only."
-            warn "Add an A record  anytls.$DOMAIN -> $PUBIP  and re-run install.sh"
-            warn "so the AnyTLS name is covered too (AnyTLS needs that record anyway)."
-        else
-            warn "certbot failed - last lines of /tmp/ragnar-certbot.log:"
-            tail -n 8 /tmp/ragnar-certbot.log 2>/dev/null | sed 's/^/    /'
-        fi
-        if [ "$CERT_OK" = 1 ]; then
-            cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$BASE/certs/fullchain.pem"
-            cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem"   "$BASE/certs/privkey.pem"
+if [ "$IS_UPDATE" = 1 ] && [ -s "$BASE/certs/fullchain.pem" ] && [ -s "$BASE/certs/privkey.pem" ]; then
+    log "Preserving existing TLS certificates"
+else
+    CERT_OK=0
+    if [ -n "$DOMAIN" ]; then
+        DIP=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
+        if [ "$DIP" = "$PUBIP" ]; then
+            systemctl stop haproxy 2>/dev/null || true
+            : > /tmp/ragnar-certbot.log
+            if certbot certonly --standalone --non-interactive --agree-tos \
+                    -m "admin@$DOMAIN" -d "$DOMAIN" -d "anytls.$DOMAIN" \
+                    >>/tmp/ragnar-certbot.log 2>&1; then
+                CERT_OK=1; log "Let's Encrypt certificate installed (domain + anytls subdomain)"
+            elif certbot certonly --standalone --non-interactive --agree-tos \
+                    -m "admin@$DOMAIN" -d "$DOMAIN" >>/tmp/ragnar-certbot.log 2>&1; then
+                CERT_OK=1
+                warn "Let's Encrypt certificate installed for $DOMAIN only."
+                warn "Add an A record  anytls.$DOMAIN -> $PUBIP  and re-run install.sh"
+                warn "so the AnyTLS name is covered too (AnyTLS needs that record anyway)."
+            else
+                warn "certbot failed - last lines of /tmp/ragnar-certbot.log:"
+                tail -n 8 /tmp/ragnar-certbot.log 2>/dev/null | sed 's/^/    /'
+            fi
+            if [ "$CERT_OK" = 1 ]; then
+                cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$BASE/certs/fullchain.pem"
+                cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem"   "$BASE/certs/privkey.pem"
+            fi
         fi
     fi
-fi
-if [ "$CERT_OK" = 0 ]; then
-    warn "Using a self-signed certificate (clients: allow insecure / set SNI to the host)"
-    openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/privkey.pem" \
-        -out "$BASE/certs/fullchain.pem" -days 3650 -nodes \
-        -subj "/CN=$HOST_FOR_LINKS" \
-        -addext "subjectAltName=DNS:$HOST_FOR_LINKS,IP:$PUBIP" 2>/dev/null
+    if [ "$CERT_OK" = 0 ]; then
+        warn "Using a self-signed certificate (clients: allow insecure / set SNI to the host)"
+        openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/privkey.pem" \
+            -out "$BASE/certs/fullchain.pem" -days 3650 -nodes \
+            -subj "/CN=$HOST_FOR_LINKS" \
+            -addext "subjectAltName=DNS:$HOST_FOR_LINKS,IP:$PUBIP" 2>/dev/null
+    fi
 fi
 cat "$BASE/certs/fullchain.pem" "$BASE/certs/privkey.pem" > "$BASE/certs/haproxy.pem"
 chmod 600 "$BASE/certs/"*.pem "$BASE/certs/haproxy.pem"
 # ZIVPN certificate (its own format/names)
-openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/zivpn.key" \
-    -out "$BASE/certs/zivpn.crt" -days 3650 -nodes -subj "/CN=$HOST_FOR_LINKS" 2>/dev/null
+if [ ! -s "$BASE/certs/zivpn.crt" ] || [ ! -s "$BASE/certs/zivpn.key" ]; then
+    openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/zivpn.key" \
+        -out "$BASE/certs/zivpn.crt" -days 3650 -nodes -subj "/CN=$HOST_FOR_LINKS" 2>/dev/null
+fi
 
 # ---------------------------------------------------------------------
 # SSH: OpenSSH 22 + Dropbear 109 (backends only; front door is HAProxy)
@@ -377,7 +426,9 @@ ARCH=$(uname -m); [ "$ARCH" = x86_64 ] && ZARCH=amd64 || ZARCH=arm64
 # "zivpn server -c <config>", exactly as upstream's own installer does.
 ZURL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-${ZARCH}"
 ragnar_backup_file /usr/local/bin/zivpn || die "Cannot preserve existing ZIVPN binary"
-if fetch_bin "$ZURL" /usr/local/bin/zivpn; then
+if [ "$IS_UPDATE" = 1 ] && [ -x /usr/local/bin/zivpn ] && [ "${RAGNAR_FORCE_BINS:-0}" != "1" ]; then
+    log "Keeping existing ZIVPN binary"
+elif fetch_bin "$ZURL" /usr/local/bin/zivpn; then
     log "ZIVPN binary installed"
 else
     warn "ZIVPN binary download failed - service created but it cannot start until /usr/local/bin/zivpn exists"
@@ -413,7 +464,9 @@ fi
 # ---------------------------------------------------------------------
 ragnar_backup_file /usr/local/bin/udp-custom || die "Cannot preserve existing UDP Custom binary"
 if [ "$ARCH" = x86_64 ]; then
-    if fetch_bin https://raw.githubusercontent.com/http-custom/udp-custom/main/bin/udp-custom-linux-amd64 \
+    if [ "$IS_UPDATE" = 1 ] && [ -x /usr/local/bin/udp-custom ] && [ "${RAGNAR_FORCE_BINS:-0}" != "1" ]; then
+        log "Keeping existing udp-custom binary"
+    elif fetch_bin https://raw.githubusercontent.com/http-custom/udp-custom/main/bin/udp-custom-linux-amd64 \
             /usr/local/bin/udp-custom; then
         echo "2a1b5584c7947feb5a02e847e09795751024f63ce7137a353c2b9c2a4282d636  /usr/local/bin/udp-custom" \
             | sha256sum -c - >/dev/null 2>&1 \
@@ -660,11 +713,34 @@ EOF
 RAGNAR_DIR="$BASE" python3 "$BASE/web/webpanel.py" --init || true
 
 systemctl daemon-reload
-for svc in haproxy ssh dropbear ragnar-wsproxy ragnar-landing xray sing-box zivpn \
-           udp-custom badvpn-udpgw slowdns ragnar-check.timer ragnar-watchdog.timer \
-           ragnar-web; do
-    systemctl enable --now "$svc" 2>/dev/null || warn "could not start $svc (check: systemctl status $svc)"
+systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
+systemctl reload-or-restart ssh 2>/dev/null || systemctl reload-or-restart sshd 2>/dev/null || true
+for tmr in ragnar-check.timer ragnar-watchdog.timer; do
+    systemctl enable --now "$tmr" 2>/dev/null || warn "could not start $tmr"
 done
+for svc in haproxy dropbear ragnar-wsproxy ragnar-landing xray sing-box zivpn \
+           udp-custom badvpn-udpgw slowdns; do
+    systemctl enable "$svc" >/dev/null 2>&1 || true
+    systemctl restart "$svc" 2>/dev/null || warn "could not start $svc (check: systemctl status $svc)"
+done
+if [ "$IS_UPDATE" = 1 ]; then
+    python3 - "$BASE/update-status.json" "$BASE/version" <<'PY' 2>/dev/null || true
+import datetime, json, os, sys
+ver = ""
+if os.path.exists(sys.argv[2]):
+    ver = open(sys.argv[2]).read().split()[0]
+data = {
+    "state": "done",
+    "version": ver,
+    "message": f"Updated to {ver[:7] or 'latest'}.",
+    "time": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+}
+with open(sys.argv[1], "w") as fh:
+    json.dump(data, fh, indent=1)
+PY
+fi
+systemctl enable ragnar-web >/dev/null 2>&1 || true
+systemctl restart ragnar-web 2>/dev/null || warn "could not start ragnar-web (check: systemctl status ragnar-web)"
 
 cat <<EOF
 

@@ -2082,15 +2082,51 @@ def panel_update_state():
 def page_settings(csrf, flash=""):
     cfg = load_web_cfg()
     status, tail = panel_update_state()
-    last = ""
-    if status:
-        last = (
-            f'<p class="meta-line">Last update run: '
-            f'<b>{esc(status.get("state", "-"))}</b> — '
-            f'{esc(status.get("message", ""))}<br>'
-            f'<span>{esc(status.get("time", ""))}</span></p>'
-        )
-    log_html = f'<div class="log-viewer">{esc(tail)}</div>' if tail else ""
+    st_state = (status or {}).get("state", "-")
+    st_msg = (status or {}).get("message", "No update runs recorded yet.")
+    st_time = (status or {}).get("time", "")
+    last = (
+        f'<p class="meta-line" id="upd-status-line">Last update run: '
+        f'<b id="upd-state">{esc(st_state)}</b> — '
+        f'<span id="upd-msg">{esc(st_msg)}</span><br>'
+        f'<span id="upd-time">{esc(st_time)}</span></p>'
+    )
+    log_disp = "" if tail else ' style="display:none"'
+    log_html = f'<div class="log-viewer" id="upd-log"{log_disp}>{esc(tail)}</div>'
+    upd_js = f"""
+(function() {{
+  var url = "{U('/api/update-status')}";
+  var sawRunning = { 'true' if st_state == 'running' or 'Update started' in flash else 'false' };
+  function poll() {{
+    fetch(url, {{ credentials: 'same-origin' }}).then(function(r) {{
+      return r.ok ? r.json() : null;
+    }}).then(function(d) {{
+      if (!d) return;
+      if (d.status) {{
+        var s = d.status.state || '-';
+        var elS = document.getElementById('upd-state');
+        var elM = document.getElementById('upd-msg');
+        var elT = document.getElementById('upd-time');
+        var elV = document.getElementById('upd-ver');
+        if (elS) elS.textContent = s;
+        if (elM) elM.textContent = d.status.message || '';
+        if (elT) elT.textContent = d.status.time || '';
+        if (elV && d.version) elV.textContent = d.version;
+        if (s === 'running') sawRunning = true;
+        if (sawRunning && s === 'done') {{
+          sawRunning = false;
+          setTimeout(function() {{ window.location.href = "{U('/settings')}?msg=" + encodeURIComponent("Panel updated to " + (d.version || "latest")); }}, 900);
+        }}
+      }}
+      if (d.tail) {{
+        var lg = document.getElementById('upd-log');
+        if (lg) {{ lg.style.display = ''; lg.textContent = d.tail; lg.scrollTop = lg.scrollHeight; }}
+      }}
+    }}).catch(function() {{}});
+  }}
+  setInterval(poll, 2500);
+}})();
+"""
     body = f"""<div class="settings-grid">
 <div class="card editform">
 <form method="post" action="{U('/settings/password')}">
@@ -2110,12 +2146,12 @@ def page_settings(csrf, flash=""):
 <form method="post" action="{U('/settings/update')}">
 <input type="hidden" name="csrf" value="{csrf}">
 <div class="eyebrow">Panel Self-Update</div>
-<p class="meta-line">Installed version: <b>{esc(panel_version())}</b></p>
+<p class="meta-line">Installed version: <b id="upd-ver">{esc(panel_version())}</b></p>
 {last}
-<p class="meta-line">Downloads the latest main branch from GitHub, backs up current state to <code>/root</code>, and updates panel code in place while preserving users, certificates, and SlowDNS keys.</p>
+<p class="meta-line">Downloads the latest main branch from GitHub, backs up current state to <code>/root</code>, replaces all panel files in place, and restarts services while preserving users, certificates, and SlowDNS keys.</p>
 <div class="form-actions"><button class="btn" type="submit">{icon("refresh", "button-icon")}Update panel now</button></div>
 </form>{log_html}</div></div>"""
-    return layout("Settings", "settings", body, flash, page_icon="settings")
+    return layout("Settings", "settings", body, flash, page_icon="settings", extra_js=upd_js)
 
 
 # ---------------------------------------------------------------------
@@ -2312,6 +2348,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(
                 200, json.dumps(api_status_payload()),
                 ctype="application/json; charset=utf-8")
+        if path == "/api/update-status":
+            st_obj, tail_txt = panel_update_state()
+            return self._send(
+                200, json.dumps({"version": panel_version(),
+                                 "status": st_obj, "tail": tail_txt}),
+                ctype="application/json; charset=utf-8")
         csrf = csrf_token(self._session_token())
         try:
             if path == "/":
@@ -2386,18 +2428,19 @@ class Handler(BaseHTTPRequestHandler):
             script = os.path.join(BASE, "core", "update.sh")
             started = False
             if shutil.which("systemd-run"):
-                r = subprocess.run(["systemd-run", "--unit=ragnar-update",
-                                    "--collect", "/bin/bash", script],
+                unit_name = f"ragnar-update-{int(time.time())}"
+                r = subprocess.run(["systemd-run", f"--unit={unit_name}",
+                                    "--collect", "/bin/bash", script, "--force"],
                                    capture_output=True)
                 started = r.returncode == 0
             if not started:
                 logf = open(os.path.join(BASE, "update.log"), "ab")
-                subprocess.Popen(["/bin/bash", script], stdout=logf,
+                subprocess.Popen(["/bin/bash", script, "--force"], stdout=logf,
                                  stderr=logf, start_new_session=True)
             return self._redirect(
                 U("/settings") + "?msg=" + urllib.parse.quote(
-                    "Update started - it runs in the background and the "
-                    "panel restarts during it. Refresh in a minute."))
+                    "Update started - replacing files and restarting services. "
+                    "This page reloads automatically when complete."))
         self._send(404, "Not found")
 
 

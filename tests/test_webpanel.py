@@ -189,6 +189,12 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
         self.assertIn("services", payload)
         self.assertIn("stats", payload)
         self.assertIn("cpu_pct", payload["info"])
+        # /api/update-status JSON endpoint
+        upd_raw = op.open(BASE_URL + "/api/update-status").read().decode()
+        upd_payload = json.loads(upd_raw)
+        self.assertIn("version", upd_payload)
+        self.assertIn("status", upd_payload)
+        self.assertIn("tail", upd_payload)
         # /ssh/info connection sheet
         info_page = op.open(BASE_URL + "/ssh/info?u=webuser").read().decode()
         self.assertIn("Connection details for webuser", info_page)

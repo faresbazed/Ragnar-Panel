@@ -712,15 +712,18 @@ update_panel() {
     echo -e "${W}Users, settings, certificates and SlowDNS keys are kept;${N}"
     echo -e "${W}a backup of the current state is saved to /root first.${N}"
     echo
-    bash "$RAGNAR_DIR/core/update.sh" check || { pause; return; }
+    bash "$RAGNAR_DIR/core/update.sh" check || true
     echo
-    read -rp "Update the panel now? [y/N] " a
-    if [ "$a" = y ]; then
-        if bash "$RAGNAR_DIR/core/update.sh"; then
-            echo; echo "Reloading the menu with the new version..."
-            sleep 1; exec bash "$RAGNAR_DIR/menu.sh"
-        fi
-    fi
+    read -rp "Update / reinstall latest panel files now? [y/N] " a
+    case "$a" in
+        y|Y|yes|YES)
+            if bash "$RAGNAR_DIR/core/update.sh" --force; then
+                hash -r 2>/dev/null || true
+                echo; echo "Reloading the menu with the new version..."
+                sleep 1; exec bash "$RAGNAR_DIR/menu.sh"
+            fi
+            ;;
+    esac
     pause
 }
 status_page() {

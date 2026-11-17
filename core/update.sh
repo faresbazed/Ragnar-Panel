@@ -59,10 +59,16 @@ current_sha() {
 }
 
 latest_sha() {
-    curl -fsS --max-time 30 \
-        "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' \
-        2>/dev/null || echo ""
+    local sha=""
+    if command -v git >/dev/null 2>&1; then
+        sha="$(git ls-remote "https://github.com/$REPO.git" refs/heads/main 2>/dev/null | awk 'NR==1 {print $1}')"
+    fi
+    if [ -z "$sha" ]; then
+        sha="$(curl -fsS --max-time 25 -H "Cache-Control: no-cache" \
+            "https://api.github.com/repos/$REPO/commits/main?t=$(date +%s)" 2>/dev/null \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' 2>/dev/null || echo "")"
+    fi
+    echo "$sha"
 }
 
 short() { [ -n "$1" ] && echo "${1:0:7}" || echo "unknown"; }
@@ -99,14 +105,14 @@ FORCE=0; [ "${1:-}" = "--force" ] && FORCE=1
 cur="$(current_sha)"
 write_status "running" "$cur" "Checking GitHub for the latest version..."
 lat="$(latest_sha)"
-if [ -z "$lat" ]; then
+if [ -z "$lat" ] && [ "$FORCE" = 0 ]; then
     err "Could not reach GitHub - update aborted, nothing changed."
     write_status "failed" "$cur" "Could not reach GitHub; nothing changed."
     exit 1
 fi
-say "Installed: $(short "$cur")   Latest: $(short "$lat")"
-if [ "$FORCE" = 0 ] && [ -n "$cur" ] && [ "$cur" = "$lat" ]; then
-    say "Already up to date - nothing to do."
+say "Installed: $(short "$cur")   Latest: $(short "${lat:-main}")"
+if [ "$FORCE" = 0 ] && [ -n "$cur" ] && [ -n "$lat" ] && [ "$cur" = "$lat" ]; then
+    say "Already up to date - nothing to do (pass --force to reinstall files)."
     write_status "uptodate" "$cur" "Already up to date."
     exit 0
 fi
@@ -114,9 +120,10 @@ fi
 WORK="$(mktemp -d /tmp/ragnar-update.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
+TAR_REF="${lat:-refs/heads/main}"
 say "Downloading the latest panel code..."
-if ! curl -fsSL --max-time 300 \
-        "https://codeload.github.com/$REPO/tar.gz/$lat" -o "$WORK/src.tgz" \
+if ! curl -fsSL --max-time 300 -H "Cache-Control: no-cache" \
+        "https://codeload.github.com/$REPO/tar.gz/$TAR_REF" -o "$WORK/src.tgz" \
         >> "$LOG" 2>&1; then
     err "Download failed - update aborted, nothing changed."
     write_status "failed" "$cur" "Download failed; nothing changed."
@@ -139,6 +146,20 @@ if ! tar -czf "$BACKUP" -C "$(dirname "$BASE")" "$(basename "$BASE")" \
     exit 1
 fi
 
+# Directly replace all core, CLI, and Web Panel files up front so they are
+# guaranteed to match the downloaded release on disk immediately.
+mkdir -p "$BASE"/{core,web}
+rm -rf "$BASE/core/__pycache__" "$BASE/web/__pycache__"
+for f in ragnar.py checker.py wsproxy.py install-state.sh watchdog.sh slowdns-setup.sh update.sh; do
+    [ -f "$SRC_DIR/core/$f" ] && install -m 755 "$SRC_DIR/core/$f" "$BASE/core/$f"
+done
+[ -f "$SRC_DIR/menu.sh" ]       && install -m 755 "$SRC_DIR/menu.sh" "$BASE/menu.sh"
+[ -f "$SRC_DIR/uninstall.sh" ]  && install -m 755 "$SRC_DIR/uninstall.sh" "$BASE/uninstall.sh"
+[ -f "$SRC_DIR/web/webpanel.py" ] && install -m 755 "$SRC_DIR/web/webpanel.py" "$BASE/web/webpanel.py"
+rm -f /usr/local/bin/menu /usr/local/bin/ragnar
+ln -s "$BASE/menu.sh" /usr/local/bin/menu
+ln -s "$BASE/menu.sh" /usr/local/bin/ragnar
+
 # Feed the installer the saved domain/NS so it never prompts.
 eval "$(python3 - "$BASE/settings.json" <<'PY' 2>/dev/null
 import json, shlex, sys
@@ -153,9 +174,10 @@ for key, var in (("domain", "RAGNAR_DOMAIN"), ("ns", "RAGNAR_NS")):
 PY
 )"
 
+REC_VER="${lat:-$(date +%Y%m%d%H%M%S)}"
 say "Installing the new version (users, keys and settings are kept)..."
-write_status "running" "$lat" "Installing version $(short "$lat")..."
-( cd "$SRC_DIR" && bash install.sh ) 2>&1 | tee -a "$LOG"
+write_status "running" "$REC_VER" "Installing version $(short "$REC_VER")..."
+( cd "$SRC_DIR" && RAGNAR_UPDATE=1 bash install.sh ) 2>&1 | tee -a "$LOG"
 rc="${PIPESTATUS[0]}"
 if [ "$rc" != 0 ]; then
     err "Installer failed (exit $rc) - see $LOG"
@@ -165,7 +187,8 @@ if [ "$rc" != 0 ]; then
     exit "$rc"
 fi
 
-printf '%s %s\n' "$lat" "$(date -Is)" > "$VERSION_FILE"
-say "Panel updated to version $(short "$lat")."
-write_status "done" "$lat" "Updated to $(short "$lat"). Backup: $BACKUP"
+printf '%s %s\n' "$REC_VER" "$(date -Is)" > "$VERSION_FILE"
+write_status "done" "$REC_VER" "Updated to $(short "$REC_VER"). Backup: $BACKUP"
+systemctl restart ragnar-web 2>/dev/null || true
+say "Panel updated to version $(short "$REC_VER")."
 exit 0
