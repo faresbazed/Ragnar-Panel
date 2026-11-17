@@ -216,12 +216,33 @@ def _ss_server_key():
     return key
 
 
-def xray_add(name, days, quota_gb=0, ip_limit=0):
+def _normalize_xray_uuid(value):
+    if value is None or not str(value).strip():
+        return None
+    raw = str(value).strip()
+    try:
+        parsed = _uuid.UUID(raw)
+    except (AttributeError, TypeError, ValueError):
+        parsed = None
+    if (parsed is None or raw.lower() != str(parsed)
+            or parsed.variant != _uuid.RFC_4122
+            or parsed.version not in range(1, 9)):
+        raise ValueError(
+            "Custom UUID must be a canonical RFC 4122 UUID, such as "
+            "123e4567-e89b-42d3-a456-426614174000")
+    return str(parsed)
+
+
+def xray_add(name, days, quota_gb=0, ip_limit=0, custom_uuid=None):
     users = load_xray()
     if name in users:
         raise ValueError(f"Xray user '{name}' already exists")
+    user_uuid = _normalize_xray_uuid(custom_uuid) or str(_uuid.uuid4())
+    if any(str(user.get("uuid", "")).lower() == user_uuid
+           for user in users.values()):
+        raise ValueError("This UUID is already assigned to an Xray user")
     users[name] = {
-        "uuid": str(_uuid.uuid4()),
+        "uuid": user_uuid,
         "password": _ss_password(),          # trojan / anytls password
         "ss_password": _ss_password(),       # shadowsocks-2022 password
         "created": _today().isoformat(),
@@ -1016,7 +1037,8 @@ def main(argv):
             name = args[0]; d = int(args[1])
             q = float(args[2]) if len(args) > 2 else 0
             i = int(args[3]) if len(args) > 3 else 0
-            xray_add(name, d, q, i); apply_configs()
+            custom_uuid = args[4] if len(args) > 4 else None
+            xray_add(name, d, q, i, custom_uuid); apply_configs()
             print(f"Xray user '{name}' created.\n\n{fmt_links(name)}")
         elif cmd == "xray-edit":
             kw = {}

@@ -19,6 +19,19 @@ warn() { echo -e "\033[93m[RAGNAR]\033[0m $*"; }
 die()  { echo -e "\033[91m[RAGNAR] $*\033[0m"; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "Run as root: sudo bash install.sh"
+. "$SRC/core/install-state.sh" || die "Cannot load install-state helpers"
+ragnar_state_init || die "Cannot create installer state directory"
+# Snapshot service state before apt can start newly installed daemons. On a
+# reinstall, the first-install snapshot is retained rather than overwritten.
+for svc in haproxy dropbear vnstat netfilter-persistent masterdnsvpn xray sing-box zivpn udp-custom badvpn-udpgw udpgw \
+           slowdns ragnar-wsproxy ragnar-landing ragnar-check.timer \
+           ragnar-watchdog.timer ragnar-web; do
+    ragnar_capture_service_state "$svc" || warn "Could not record prior state for $svc"
+done
+# iptables-persistent saves the whole host ruleset; keep the existing saved
+# rules so uninstall can restore them instead of leaving Ragnar's snapshot.
+ragnar_backup_file /etc/iptables/rules.v4 || die "Cannot preserve existing IPv4 firewall rules"
+ragnar_backup_file /etc/iptables/rules.v6 || die "Cannot preserve existing IPv6 firewall rules"
 . /etc/os-release 2>/dev/null || die "Cannot read /etc/os-release"
 case " $ID ${ID_LIKE:-} " in
     *ubuntu*|*debian*) : ;;
@@ -46,16 +59,37 @@ log "Installing $PANEL for host $HOST_FOR_LINKS (IP $PUBIP)"
 # ---------------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 # Repair a half-finished dpkg state first (a common fresh-VPS landmine:
-# every apt install then fails with "dpkg was interrupted").
-dpkg --configure -a 2>/dev/null || true
-apt-get install -f -y >/dev/null 2>&1 || true
-# Silence "sudo: unable to resolve host" on hosts without a hosts entry
-grep -q " $(hostname)" /etc/hosts 2>/dev/null || echo "127.0.1.1 $(hostname)" >> /etc/hosts
-apt-get update -y
+# every apt install then fails with "dpkg was interrupted"). Never continue
+# after a failed repair/update; that would leave a partially configured host.
+dpkg --configure -a || die "dpkg configuration failed; fix the package-manager errors above and re-run install.sh"
+apt-get install -f -y || die "apt dependency repair failed; fix the errors above and re-run install.sh"
+# Silence "sudo: unable to resolve host" on hosts without a hosts entry.
+if ! grep -q " $(hostname)" /etc/hosts 2>/dev/null; then
+    printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
+    printf '127.0.1.1 %s\n' "$(hostname)" >> "$RAGNAR_STATE_DIR/hosts-added"
+fi
+apt-get update || die "apt package-index update failed; check network/repository configuration and re-run install.sh"
 apt-get install -y curl wget unzip tar jq python3 haproxy dropbear \
-    openssh-server vnstat iptables socat openssl cron \
+    openssh-server vnstat iptables iptables-persistent socat openssl cron \
     certbot iproute2 net-tools procps ca-certificates gnupg \
     || die "Package installation failed - fix apt (try: sudo dpkg --configure -a) and re-run install.sh"
+# Keep a clean persistence baseline before adding panel firewall rules. The
+# package may create rules.v4/rules.v6 during its own setup, so capture those
+# generated defaults too when no file existed before this installation.
+for family in 4 6; do
+    rules_file="/etc/iptables/rules.v${family}"
+    original_file="$RAGNAR_STATE_DIR/original/etc/iptables/rules.v${family}"
+    if [ ! -e "$original_file" ] && [ ! -L "$original_file" ] && [ ! -e "$rules_file" ]; then
+        mkdir -p /etc/iptables
+        save_bin=iptables-save
+        [ "$family" = 4 ] || save_bin=ip6tables-save
+        if command -v "$save_bin" >/dev/null 2>&1; then
+            tmp="${rules_file}.tmp.$$"
+            if "$save_bin" > "$tmp"; then mv -f "$tmp" "$rules_file"; else rm -f "$tmp"; fi
+        fi
+    fi
+    ragnar_capture_generated_file "$rules_file" || warn "Could not preserve generated firewall baseline: $rules_file"
+done
 # NOTE: there is no 'badvpn' package in Ubuntu 24.04 - udpgw is fetched
 # as the upstream prebuilt binary in the UDP Custom section below.
 for bin in haproxy python3 openssl; do
@@ -76,32 +110,41 @@ fetch_bin() {
 }
 # Re-installing over a live panel: stop the services whose binaries are
 # about to be replaced (all units are started again at the end).
-for u in zivpn udp-custom badvpn-udpgw udpgw slowdns xray sing-box cloudflared ragnar-wsproxy; do
+for u in zivpn udp-custom badvpn-udpgw udpgw slowdns xray sing-box ragnar-wsproxy; do
     systemctl stop "$u" 2>/dev/null || true
 done
 mkdir -p /etc/haproxy
 
+ragnar_backup_file /etc/sysctl.d/99-ragnar-tuning.conf || die "Cannot preserve existing sysctl configuration"
 install -m 644 "$SRC/configs/99-ragnar-tuning.conf" /etc/sysctl.d/99-ragnar-tuning.conf
 sysctl --system >/dev/null 2>&1 || true
-grep -q "ragnar" /etc/security/limits.conf || cat >> /etc/security/limits.conf <<'EOF'
-# ragnar
+if ! grep -Fq '# BEGIN Ragnar panel limits' /etc/security/limits.conf; then
+    if ! grep -Fq '# ragnar' /etc/security/limits.conf; then
+        cat >> /etc/security/limits.conf <<'EOF'
+# BEGIN Ragnar panel limits
 * soft nofile 1048576
 * hard nofile 1048576
 root soft nofile 1048576
 root hard nofile 1048576
+# END Ragnar panel limits
 EOF
+    fi
+fi
 systemctl enable vnstat >/dev/null 2>&1 || true
 
 mkdir -p "$BASE"/{db,core,certs,xray,sing-box,zivpn,udp,slowdns,web}
 install -m 755 "$SRC/core/ragnar.py"   "$BASE/core/ragnar.py"
 install -m 755 "$SRC/core/checker.py"  "$BASE/core/checker.py"
 install -m 755 "$SRC/core/wsproxy.py"  "$BASE/core/wsproxy.py"
+install -m 755 "$SRC/core/install-state.sh" "$BASE/core/install-state.sh"
 install -m 755 "$SRC/core/watchdog.sh" "$BASE/core/watchdog.sh"
 install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
 install -m 755 "$SRC/core/update.sh"   "$BASE/core/update.sh"
 install -m 755 "$SRC/menu.sh"          "$BASE/menu.sh"
 install -m 755 "$SRC/uninstall.sh"     "$BASE/uninstall.sh"
 install -m 755 "$SRC/web/webpanel.py"  "$BASE/web/webpanel.py"
+ragnar_backup_file /usr/local/bin/menu || die "Cannot preserve existing menu command"
+ragnar_backup_file /usr/local/bin/ragnar || die "Cannot preserve existing ragnar command"
 ln -sf "$BASE/menu.sh" /usr/local/bin/menu
 ln -sf "$BASE/menu.sh" /usr/local/bin/ragnar
 # Record the installed code version (used by the self-update check).
@@ -175,6 +218,7 @@ openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/zivpn.key" \
 # SSH: OpenSSH 22 + Dropbear 109 (backends only; front door is HAProxy)
 # ---------------------------------------------------------------------
 mkdir -p /etc/ssh/sshd_config.d
+ragnar_backup_file /etc/ssh/sshd_config.d/60-ragnar.conf || die "Cannot preserve existing SSH configuration"
 cat > /etc/ssh/sshd_config.d/60-ragnar.conf <<'EOF'
 PasswordAuthentication yes
 PermitTunnel yes
@@ -185,6 +229,7 @@ ClientAliveInterval 60
 ClientAliveCountMax 10
 MaxSessions 100
 EOF
+ragnar_backup_file /etc/default/dropbear || die "Cannot preserve existing Dropbear configuration"
 cat > /etc/default/dropbear <<'EOF'
 NO_START=0
 DROPBEAR_PORT=109
@@ -198,7 +243,10 @@ EOF
 # Ubuntu's does, so panel users could never log in on Debian. Add both
 # spellings on every distro.
 for sh in /bin/false /usr/bin/false; do
-    grep -qx "$sh" /etc/shells 2>/dev/null || echo "$sh" >> /etc/shells
+    if ! grep -Fqx "$sh" /etc/shells 2>/dev/null; then
+        printf '%s\n' "$sh" >> "$RAGNAR_STATE_DIR/shells-added"
+        echo "$sh" >> /etc/shells
+    fi
 done
 systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
 systemctl enable dropbear 2>/dev/null || true
@@ -214,6 +262,7 @@ mkdir -p "$BASE/www"
 cat > "$BASE/www/index.html" <<'EOF'
 <html><head><title>Welcome</title></head><body><h3>It works.</h3></body></html>
 EOF
+ragnar_backup_file /etc/systemd/system/ragnar-landing.service || die "Cannot preserve existing landing-page service"
 cat > /etc/systemd/system/ragnar-landing.service <<'EOF'
 [Unit]
 Description=Ragnar landing page
@@ -227,6 +276,7 @@ WantedBy=multi-user.target
 EOF
 
 # SSH WebSocket proxy service
+ragnar_backup_file /etc/systemd/system/ragnar-wsproxy.service || die "Cannot preserve existing WebSocket service"
 cat > /etc/systemd/system/ragnar-wsproxy.service <<'EOF'
 [Unit]
 Description=Ragnar SSH WebSocket proxy
@@ -243,9 +293,10 @@ EOF
 # ---------------------------------------------------------------------
 # HAProxy front door (owns 80 + 443 - see configs/haproxy.cfg)
 # ---------------------------------------------------------------------
-cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak-ragnar 2>/dev/null || true
+ragnar_backup_file /etc/haproxy/haproxy.cfg || die "Cannot preserve existing HAProxy configuration"
 install -m 644 "$SRC/configs/haproxy.cfg" /etc/haproxy/haproxy.cfg
 mkdir -p /run/haproxy /etc/systemd/system/haproxy.service.d
+ragnar_backup_file /etc/systemd/system/haproxy.service.d/10-ragnar.conf || die "Cannot preserve existing HAProxy override"
 cat > /etc/systemd/system/haproxy.service.d/10-ragnar.conf <<'EOF'
 [Service]
 LimitNOFILE=1048576
@@ -273,6 +324,7 @@ fi
 # (also on reinstalls, where xray already exists and the installer above is skipped) so the panel's
 # own xray.service below (ExecStart=/etc/ragnar/xray/config.json) wins. daemon-reload runs later
 # in this script, before the services are enabled.
+ragnar_backup_file /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf || die "Cannot preserve Xray service drop-in"
 rm -f /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf
 rmdir /etc/systemd/system/xray.service.d 2>/dev/null || true
 mkdir -p /usr/local/etc/xray
@@ -280,6 +332,7 @@ if ! command -v sing-box >/dev/null; then
     bash -c "$(curl -fsSL https://sing-box.app/install.sh)" \
         || warn "sing-box install failed - AnyTLS will stay offline until it is installed"
 fi
+ragnar_backup_file /etc/systemd/system/xray.service || die "Cannot preserve existing Xray service"
 cat > /etc/systemd/system/xray.service <<'EOF'
 [Unit]
 Description=Xray (Ragnar)
@@ -294,6 +347,7 @@ User=root
 WantedBy=multi-user.target
 EOF
 SINGBOX_BIN=$(command -v sing-box || echo /usr/local/bin/sing-box)
+ragnar_backup_file /etc/systemd/system/sing-box.service || die "Cannot preserve existing sing-box service"
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box AnyTLS (Ragnar)
@@ -307,8 +361,11 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 # AnyTLS direct fallback port (8446 -> sing-box backend, simple redirect)
-iptables -t nat -C PREROUTING -p tcp --dport 8446 -j REDIRECT --to-ports 10006 2>/dev/null || \
-    iptables -t nat -A PREROUTING -p tcp --dport 8446 -j REDIRECT --to-ports 10006
+RAGNAR_FW_COMMENT=ragnar-panel
+if ! iptables -t nat -C PREROUTING -p tcp --dport 8446 -j REDIRECT --to-ports 10006 2>/dev/null && \
+   ! iptables -t nat -C PREROUTING -p tcp --dport 8446 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 10006 2>/dev/null; then
+    iptables -t nat -A PREROUTING -p tcp --dport 8446 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 10006
+fi
 
 # ---------------------------------------------------------------------
 # UDP ZIVPN (binary: zahidbd2/udp-zivpn) - optimized
@@ -317,11 +374,13 @@ ARCH=$(uname -m); [ "$ARCH" = x86_64 ] && ZARCH=amd64 || ZARCH=arm64
 # Pinned upstream release (zahidbd2/udp-zivpn) - the binary is invoked as
 # "zivpn server -c <config>", exactly as upstream's own installer does.
 ZURL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-${ZARCH}"
+ragnar_backup_file /usr/local/bin/zivpn || die "Cannot preserve existing ZIVPN binary"
 if fetch_bin "$ZURL" /usr/local/bin/zivpn; then
     log "ZIVPN binary installed"
 else
     warn "ZIVPN binary download failed - service created but it cannot start until /usr/local/bin/zivpn exists"
 fi
+ragnar_backup_file /etc/systemd/system/zivpn.service || die "Cannot preserve existing ZIVPN service"
 cat > /etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
 Description=UDP ZIVPN (Ragnar)
@@ -342,12 +401,15 @@ WantedBy=multi-user.target
 EOF
 # ZIVPN speed trick used by every fast panel: the client may hit any UDP
 # port in 6000-19999; redirect the whole range onto the server port.
-iptables -t nat -C PREROUTING -p udp --dport 6000:19999 -j REDIRECT --to-ports 5667 2>/dev/null || \
-    iptables -t nat -A PREROUTING -p udp --dport 6000:19999 -j REDIRECT --to-ports 5667
+if ! iptables -t nat -C PREROUTING -p udp --dport 6000:19999 -j REDIRECT --to-ports 5667 2>/dev/null && \
+   ! iptables -t nat -C PREROUTING -p udp --dport 6000:19999 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 5667 2>/dev/null; then
+    iptables -t nat -A PREROUTING -p udp --dport 6000:19999 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 5667
+fi
 
 # ---------------------------------------------------------------------
 # UDP Custom (ePro binary, checksum-verified) + badvpn-udpgw
 # ---------------------------------------------------------------------
+ragnar_backup_file /usr/local/bin/udp-custom || die "Cannot preserve existing UDP Custom binary"
 if [ "$ARCH" = x86_64 ]; then
     if fetch_bin https://raw.githubusercontent.com/http-custom/udp-custom/main/bin/udp-custom-linux-amd64 \
             /usr/local/bin/udp-custom; then
@@ -373,6 +435,7 @@ except Exception:
 os.makedirs("/etc/ragnar/udp", exist_ok=True)
 json.dump(cfg, open("/etc/ragnar/udp/config.json", "w"), indent=2)
 PY
+ragnar_backup_file /etc/systemd/system/udp-custom.service || die "Cannot preserve existing UDP Custom service"
 cat > /etc/systemd/system/udp-custom.service <<'EOF'
 [Unit]
 Description=UDP Custom by ePro Dev Team (Ragnar)
@@ -391,6 +454,8 @@ EOF
 # binary. Installed under its canonical name and service so it shows up
 # as badvpn-udpgw everywhere (older Ragnar installs ran it as udpgw -
 # migrate the binary and retire the old unit name).
+ragnar_backup_file /usr/local/bin/badvpn-udpgw || die "Cannot preserve existing BadVPN binary"
+ragnar_backup_file /usr/local/bin/udpgw || die "Cannot preserve existing udpgw link"
 UDPGW_BIN=$(command -v badvpn-udpgw || true)
 if [ -z "$UDPGW_BIN" ]; then
     if [ -x /usr/local/bin/badvpn-udpgw ]; then
@@ -408,9 +473,11 @@ if [ -z "$UDPGW_BIN" ]; then
 fi
 ln -sf "$UDPGW_BIN" /usr/local/bin/udpgw
 if [ -f /etc/systemd/system/udpgw.service ]; then
+    ragnar_backup_file /etc/systemd/system/udpgw.service || die "Cannot preserve existing udpgw service"
     systemctl disable --now udpgw 2>/dev/null || true
     rm -f /etc/systemd/system/udpgw.service
 fi
+ragnar_backup_file /etc/systemd/system/badvpn-udpgw.service || die "Cannot preserve existing BadVPN service"
 cat > /etc/systemd/system/badvpn-udpgw.service <<EOF
 [Unit]
 Description=BadVPN udpgw - UDP gateway for UDP Custom (Ragnar)
@@ -425,11 +492,21 @@ WantedBy=multi-user.target
 EOF
 # UDP Custom clients can use any UDP port; NAT the range onto 36712
 # (excluding ZIVPN's range and DNS).
-iptables -t nat -C PREROUTING -p udp --dport 20000:65535 -j REDIRECT --to-ports 36712 2>/dev/null || \
-    iptables -t nat -A PREROUTING -p udp --dport 20000:65535 -j REDIRECT --to-ports 36712
+if ! iptables -t nat -C PREROUTING -p udp --dport 20000:65535 -j REDIRECT --to-ports 36712 2>/dev/null && \
+   ! iptables -t nat -C PREROUTING -p udp --dport 20000:65535 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 36712 2>/dev/null; then
+    iptables -t nat -A PREROUTING -p udp --dport 20000:65535 -m comment --comment "$RAGNAR_FW_COMMENT" -j REDIRECT --to-ports 36712
+fi
 # Outbound NAT for tunnel users
-iptables -t nat -C POSTROUTING -o "$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'dev \K\S+')" -j MASQUERADE 2>/dev/null || \
-    iptables -t nat -A POSTROUTING -o "$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'dev \K\S+')" -j MASQUERADE
+OUT_IF=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<NF; i++) if ($i == "dev") {print $(i+1); exit}}')
+if [ -n "$OUT_IF" ]; then
+    printf '%s\n' "$OUT_IF" > "$RAGNAR_STATE_DIR/nat-interface"
+    if ! iptables -t nat -C POSTROUTING -o "$OUT_IF" -j MASQUERADE 2>/dev/null && \
+       ! iptables -t nat -C POSTROUTING -o "$OUT_IF" -m comment --comment "$RAGNAR_FW_COMMENT" -j MASQUERADE 2>/dev/null; then
+        iptables -t nat -A POSTROUTING -o "$OUT_IF" -m comment --comment "$RAGNAR_FW_COMMENT" -j MASQUERADE
+    fi
+else
+    warn "No default IPv4 interface found; outbound NAT rule was not added"
+fi
 
 # ---------------------------------------------------------------------
 # SlowDNS - the Ragnar-VPS-Management-Panel implementation (turbo
@@ -458,6 +535,7 @@ for key, fname in (("slowdns_mtu", "mtu"), ("slowdns_resolver", "dns_resolver"),
         s[key] = v if key == "slowdns_resolver" else int(v)
 json.dump(s, open(p, "w"), indent=2)
 PYEOF2
+ragnar_backup_file /etc/systemd/system/slowdns.service || die "Cannot preserve existing SlowDNS service"
 RAGNAR_DIR="$BASE" bash "$BASE/core/slowdns-setup.sh" "${NS:-}" "" "" || \
     warn "SlowDNS setup failed - re-run: RAGNAR_DIR=$BASE bash $BASE/core/slowdns-setup.sh"
 
@@ -474,6 +552,7 @@ fi
 # ---------------------------------------------------------------------
 # Limit checker + watchdog timers (every minute)
 # ---------------------------------------------------------------------
+ragnar_backup_file /etc/systemd/system/ragnar-check.service || die "Cannot preserve existing checker service"
 cat > /etc/systemd/system/ragnar-check.service <<'EOF'
 [Unit]
 Description=Ragnar limit checker (expiry / GB quota / IP limit)
@@ -481,6 +560,7 @@ Description=Ragnar limit checker (expiry / GB quota / IP limit)
 Type=oneshot
 ExecStart=/usr/bin/python3 /etc/ragnar/core/checker.py --apply
 EOF
+ragnar_backup_file /etc/systemd/system/ragnar-check.timer || die "Cannot preserve existing checker timer"
 cat > /etc/systemd/system/ragnar-check.timer <<'EOF'
 [Unit]
 Description=Run Ragnar limit checker every minute
@@ -490,6 +570,7 @@ OnUnitActiveSec=1min
 [Install]
 WantedBy=timers.target
 EOF
+ragnar_backup_file /etc/systemd/system/ragnar-watchdog.service || die "Cannot preserve existing watchdog service"
 cat > /etc/systemd/system/ragnar-watchdog.service <<'EOF'
 [Unit]
 Description=Ragnar service watchdog
@@ -497,6 +578,7 @@ Description=Ragnar service watchdog
 Type=oneshot
 ExecStart=/bin/bash /etc/ragnar/core/watchdog.sh
 EOF
+ragnar_backup_file /etc/systemd/system/ragnar-watchdog.timer || die "Cannot preserve existing watchdog timer"
 cat > /etc/systemd/system/ragnar-watchdog.timer <<'EOF'
 [Unit]
 Description=Run Ragnar watchdog every minute
@@ -513,7 +595,10 @@ EOF
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
     for p in 22/tcp 80/tcp 443/tcp 109/tcp 143/tcp 53 53/udp 53/tcp 5667/udp \
              36712/udp 6000:19999/udp 20000:65535/udp 8446/tcp 2053/tcp; do
-        ufw allow "$p" >/dev/null 2>&1 || true
+        if ! ufw status 2>/dev/null | awk -v spec="$p" '$1 == spec {found=1} END {exit !found}'; then
+            printf '%s\n' "$p" >> "$RAGNAR_STATE_DIR/ufw-added"
+            ufw allow "$p" >/dev/null 2>&1 || true
+        fi
     done
 fi
 # Same protection when UFW's chains are loaded and enforcing but
@@ -528,14 +613,18 @@ if iptables -S ufw-user-input >/dev/null 2>&1; then
                 "tcp 53" "udp 53" "udp 5667" "udp 36712" \
                 "tcp 8446" "tcp 2053"; do
         set -- $spec
-        iptables -C ufw-user-input -p "$1" --dport "$2" -j ACCEPT 2>/dev/null || \
-            iptables -A ufw-user-input -p "$1" --dport "$2" -j ACCEPT 2>/dev/null || true
+        if ! iptables -C ufw-user-input -p "$1" --dport "$2" -j ACCEPT 2>/dev/null && \
+           ! iptables -C ufw-user-input -p "$1" --dport "$2" -m comment --comment "$RAGNAR_FW_COMMENT" -j ACCEPT 2>/dev/null; then
+            iptables -A ufw-user-input -p "$1" --dport "$2" -m comment --comment "$RAGNAR_FW_COMMENT" -j ACCEPT 2>/dev/null || true
+        fi
     done
 fi
 # persist iptables NAT rules across reboots
-apt-get install -y iptables-persistent >/dev/null 2>&1 || true
-netfilter-persistent save >/dev/null 2>&1 || \
-    iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+if ! netfilter-persistent save >/dev/null 2>&1; then
+    mkdir -p /etc/iptables
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || warn "Could not save IPv4 firewall rules"
+    ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------
 # Generate configs + start everything
@@ -549,6 +638,7 @@ RAGNAR_DIR="$BASE" python3 "$BASE/core/ragnar.py" gen-configs || true
 # ---------------------------------------------------------------------
 # Web panel (3x-ui style, HTTPS :2053 with the domain certificate)
 # ---------------------------------------------------------------------
+ragnar_backup_file /etc/systemd/system/ragnar-web.service || die "Cannot preserve existing web-panel service"
 cat > /etc/systemd/system/ragnar-web.service <<'EOF'
 [Unit]
 Description=Ragnar Web Panel

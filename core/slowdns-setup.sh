@@ -42,6 +42,23 @@ MARKER="$SD_DIR/.turbo_kcp_patched"
 BUILD_LOG=/tmp/ragnar-slowdns-build.log
 mkdir -p "$SD_DIR" "$THEIR_DIR"
 
+# The SlowDNS binary and unit may also be used by the sister panel. Snapshot
+# them once so uninstall can restore the pre-Ragnar version rather than
+# deleting shared components.
+if [ -r "$BASE/core/install-state.sh" ]; then
+    . "$BASE/core/install-state.sh"
+    ragnar_state_init || { echo "[slowdns-setup] cannot create installer state directory" >&2; exit 1; }
+    ragnar_backup_file "$BIN" || { echo "[slowdns-setup] cannot preserve existing dnstt-server" >&2; exit 1; }
+    ragnar_backup_file /etc/systemd/system/slowdns.service || {
+        echo "[slowdns-setup] cannot preserve existing SlowDNS service" >&2; exit 1;
+    }
+    for file in server.key server.pub .turbo_kcp_patched nameserver mtu dns_resolver target_port; do
+        ragnar_backup_file "$THEIR_DIR/$file" || {
+            echo "[slowdns-setup] cannot preserve shared SlowDNS file: $file" >&2; exit 1;
+        }
+    done
+fi
+
 say() { echo "[slowdns-setup] $*"; }
 
 get_setting() { # key default
@@ -227,30 +244,47 @@ if [ -n "$CF_TOKEN" ] && [ -n "$ACTIVE_NS" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 5. UDP 53 -> 5300 redirection (their section 5, verbatim: clean up
-#    every older redirect variant, keep local 127.0.0.0/8 DNS working,
-#    IPv4 + IPv6, ufw allows)
+# 5. UDP 53 -> 5300 redirection. Keep existing equivalent rules (they
+#    may belong to the sister panel); add tagged rules only when missing.
 # ---------------------------------------------------------------------
-iptables -t nat -D PREROUTING -p udp --dport 5300 -j REDIRECT --to-ports 53 2>/dev/null || true
-iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
-iptables -t nat -D PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
-MAIN_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1)
-if [ -n "${MAIN_IFACE}" ]; then
-    iptables -t nat -D PREROUTING -i "${MAIN_IFACE}" -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
+FW_COMMENT=ragnar-slowdns
+for port in 53 5300; do
+    if ! iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null && \
+       ! iptables -C INPUT -p udp --dport "$port" -m comment --comment "$FW_COMMENT" -j ACCEPT 2>/dev/null; then
+        iptables -I INPUT -p udp --dport "$port" -m comment --comment "$FW_COMMENT" -j ACCEPT 2>/dev/null || true
+    fi
+done
+if ! iptables -t nat -C PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 \
+        -j REDIRECT --to-ports 5300 2>/dev/null && \
+   ! iptables -t nat -C PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 \
+        -m comment --comment "$FW_COMMENT" -j REDIRECT --to-ports 5300 2>/dev/null; then
+    iptables -t nat -I PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 \
+        -m comment --comment "$FW_COMMENT" -j REDIRECT --to-ports 5300 2>/dev/null || true
 fi
-iptables -I INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
-iptables -I INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || true
-iptables -t nat -I PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
 
-ip6tables -t nat -D PREROUTING -p udp --dport 5300 -j REDIRECT --to-ports 53 2>/dev/null || true
-ip6tables -t nat -D PREROUTING ! -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
-ip6tables -I INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
-ip6tables -I INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || true
-ip6tables -t nat -I PREROUTING ! -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
+if command -v ip6tables >/dev/null 2>&1; then
+    for port in 53 5300; do
+        if ! ip6tables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null && \
+           ! ip6tables -C INPUT -p udp --dport "$port" -m comment --comment "$FW_COMMENT" -j ACCEPT 2>/dev/null; then
+            ip6tables -I INPUT -p udp --dport "$port" -m comment --comment "$FW_COMMENT" -j ACCEPT 2>/dev/null || true
+        fi
+    done
+    if ! ip6tables -t nat -C PREROUTING ! -d ::1/128 -p udp --dport 53 \
+            -j REDIRECT --to-ports 5300 2>/dev/null && \
+       ! ip6tables -t nat -C PREROUTING ! -d ::1/128 -p udp --dport 53 \
+            -m comment --comment "$FW_COMMENT" -j REDIRECT --to-ports 5300 2>/dev/null; then
+        ip6tables -t nat -I PREROUTING ! -d ::1/128 -p udp --dport 53 \
+            -m comment --comment "$FW_COMMENT" -j REDIRECT --to-ports 5300 2>/dev/null || true
+    fi
+fi
 
 if command -v ufw >/dev/null 2>&1; then
-    ufw allow 53/udp >/dev/null 2>&1 || true
-    ufw allow 5300/udp >/dev/null 2>&1 || true
+    for port in 53/udp 5300/udp; do
+        if ! ufw status 2>/dev/null | awk -v spec="$port" '$1 == spec {found=1} END {exit !found}'; then
+            [ -n "${RAGNAR_STATE_DIR:-}" ] && printf '%s\n' "$port" >> "$RAGNAR_STATE_DIR/ufw-added"
+            ufw allow "$port" >/dev/null 2>&1 || true
+        fi
+    done
 fi
 
 if [ -z "$NS" ]; then
@@ -280,10 +314,9 @@ After=network.target ssh.service dropbear.service
 Type=simple
 Nice=-15
 LimitNOFILE=1000000
-ExecStartPre=-${IPTABLES_BIN} -I INPUT -p udp --dport 53 -j ACCEPT
-ExecStartPre=-${IPTABLES_BIN} -I INPUT -p udp --dport 5300 -j ACCEPT
-ExecStartPre=-${IPTABLES_BIN} -t nat -D PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
-ExecStartPre=-${IPTABLES_BIN} -t nat -I PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -j REDIRECT --to-ports 5300
+ExecStartPre=-${IPTABLES_BIN} -C INPUT -p udp --dport 53 -m comment --comment ragnar-slowdns -j ACCEPT
+ExecStartPre=-${IPTABLES_BIN} -C INPUT -p udp --dport 5300 -m comment --comment ragnar-slowdns -j ACCEPT
+ExecStartPre=-${IPTABLES_BIN} -t nat -C PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -m comment --comment ragnar-slowdns -j REDIRECT --to-ports 5300
 ExecStart=$BIN -udp :5300 -mtu ${MTU} -privkey-file $SD_DIR/server.key ${NS} 127.0.0.1:${TARGET}
 Restart=always
 RestartSec=2

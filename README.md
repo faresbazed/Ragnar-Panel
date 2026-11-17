@@ -34,6 +34,13 @@ menu        # or: ragnar
 ```
 
 Uninstall from the menu (option **13**) or `sudo bash /etc/ragnar/uninstall.sh`.
+It restores configuration and service state captured before the installer
+changes them, and removes only firewall rules tagged as Ragnar-owned. Upstream
+tools and required Debian/Ubuntu packages are left installed; shared SlowDNS
+data in `/etc/vps-panel/slowdns` is kept for the sister panel. An older install
+may already have overwritten a file before snapshots existed, so that original
+cannot always be reconstructed automatically when upgrading from an older
+release.
 
 ## Updating
 
@@ -96,6 +103,10 @@ Cloudflare WSS 443**:
 
 Per-user expiry, GB quota (Xray Stats API counters) and edit/renew work
 the same as SSH.
+When creating an account in the terminal menu or web panel, an optional
+canonical RFC 4122 UUID can be supplied for VLESS/VMess; leave it blank for
+automatic generation. Custom UUIDs must be valid and not already assigned to
+another Xray user.
 
 ### Cloudflared
 Menu **11**: set the domain, set the hostname used in Cloudflare links,
@@ -188,7 +199,8 @@ tests/             local tests: python3 tests/test_ragnar.py
 
 ## Verification done locally (before any VPS)
 
-- Core unit tests: 21 checks (users, edits, links, config, enforcement)
+- Core unit tests: 41 checks (users, UUID validation, edits, links, config, enforcement)
+- Installer-state regression test: `bash tests/test_install_state.sh`
 - Generated Xray config validated with **real Xray 25.10.15**, and all
   four WS protocols tunnelled live traffic through it
 - Generated sing-box config validated with **real sing-box 1.12.9**;
