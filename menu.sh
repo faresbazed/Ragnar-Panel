@@ -84,24 +84,9 @@ svc_dot_cf() { # cloudflared only runs once a tunnel token is installed
 }
 pause() { read -rp "Press Enter to continue..." _ || true; }
 
-bandwidth_lines() { # TODAY / MONTH measured traffic, one line each
-    python3 "$CORE" bandwidth 2>/dev/null | python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = {}
-def line(label, p):
-    if not p:
-        return "%-6s n/a" % label
-    return "%-6s RX %9s  TX %9s  TOTAL %9s" % (
-        label, p["rx_f"], p["tx_f"], p["total_f"])
-print(line("TODAY", d.get("today")))
-print(line("MONTH", d.get("month")))
-src = d.get("source")
-if src and src != "vnstat":
-    print("(bandwidth source: %s)" % src)
-' | while IFS= read -r l; do echo -e "${C}$l${N}"; done
+bandwidth_lines() { # Combined RX+TX total for today and this month
+    python3 "$CORE" bandwidth-summary 2>/dev/null \
+        | while IFS= read -r l; do echo -e "${C}$l${N}"; done
 }
 
 human() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
@@ -240,7 +225,7 @@ ssh_menu() {
             "$(svc_dot ssh)" "$(svc_dot dropbear)" "$(svc_dot ragnar-wsproxy)"
         section "ACCOUNT MANAGEMENT"
         opt 1 "Create account" "Username, password, expiry and limits"
-        opt 2 "List accounts" "Show all SSH users and their status"
+        opt 2 "List accounts" "Show users, traffic used and quota"
         opt 3 "Edit / renew account" "Expiry, quota, IP limit, password or access"
         opt 4 "Delete account" "Remove a panel user"
         opt 5 "Account details" "Ports, expiry, quota and live connections"
@@ -348,7 +333,7 @@ xray_menu() {
         printf "  Xray   %s   Sing-box / AnyTLS   %s\n" "$(svc_dot xray)" "$(svc_dot sing-box)"
         section "ACCOUNT MANAGEMENT"
         opt 1 "Create account" "Enable all supported protocols at once"
-        opt 2 "List accounts" "View expiry, quota and access status"
+        opt 2 "List accounts" "View traffic used, expiry, quota and status"
         opt 3 "Edit / renew account" "Expiry, quota, IP limit or access"
         opt 4 "Delete account" "Remove a user from all protocols"
         opt 5 "Account details" "Usage, limits and live traffic"

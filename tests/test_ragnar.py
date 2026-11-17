@@ -204,6 +204,16 @@ check("bandwidth: vnstat json matched by date, not position",
       and _bw["total"] == {"rx": 1000, "tx": 2000}, str(_bw))
 check("bandwidth: unknown iface -> None",
       ragnar.parse_vnstat_json(_vj, "eth9") is None)
+_summary = ragnar.bandwidth_summary({
+    "today": {"total_f": "549.5 MB", "rx_f": "496.9 MB", "tx_f": "52.5 MB"},
+    "month": {"total_f": "549.5 MB", "rx_f": "496.9 MB", "tx_f": "52.5 MB"},
+    "source": "vnstat"})
+check("bandwidth: simplified summary shows only combined totals",
+      "549.5 MB" in _summary and "RX" not in _summary and "TX" not in _summary)
+_fallback = ragnar.bandwidth_summary({"source": "kernel (since boot)"})
+check("bandwidth: simplified summary retains fallback-source label",
+      "kernel (since boot)" in _fallback and "TODAY" in _fallback
+      and "MONTH" in _fallback)
 
 # ---- live connection counts ----------------------------------------------
 _ss_counts = (

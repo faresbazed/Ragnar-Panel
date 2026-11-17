@@ -13,16 +13,16 @@ Traffic counters:
     deltas into the panel DB each run).
   * SSH: per-socket byte counters from `ss -tnpi` (tcp_info bytes_sent /
     bytes_received on the client-facing socket of each sshd/dropbear
-    session - local port 22/109/143; the daemon's outbound sockets to
-    forwarded targets are excluded so relayed bytes count once),
-    accumulated the same way. This is the only reliable per-user source:
-    iptables
-    owner-match does NOT see daemon relay traffic, because an accepted
-    socket belongs to the root listener, not the per-user child — owner
-    counters stayed at ~0 while users tunnelled gigabytes. Sockets that
-    open and close between two runs lose only their final partial minute.
-    The old owner-match counters are still accumulated for traffic a user
-    originates from a shell (disjoint from daemon sockets, no overlap).
+    session - local port 22/109/143). DNSTT forwards SlowDNS sessions to
+    the user's SSH backend on port 22 or 109, so those bytes are included.
+    The daemon's outbound sockets to forwarded targets are excluded so
+    relayed bytes count once. This is the only reliable per-user source:
+    iptables owner-match does NOT see daemon relay traffic, because an
+    accepted socket belongs to the root listener, not the per-user child —
+    owner counters stayed at ~0 while users tunnelled gigabytes. Sockets
+    that open and close between two runs lose only their final partial
+    minute. The old owner-match counters are still accumulated for traffic
+    a user originates from a shell (disjoint from daemon sockets, no overlap).
 
 Without --apply it only prints the plan (dry run).
 """

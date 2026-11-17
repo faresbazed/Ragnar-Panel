@@ -407,10 +407,8 @@ def page_dashboard(csrf, flash=""):
          f"SSH {stats.get('ssh', 0)} - Xray {stats.get('vless', 0)} - "
          f"ZIVPN {stats.get('zivpn', 0)}"),
         ("Online now", str(online.get("online", 0)), "SSH sessions + active Xray"),
-        ("Bandwidth today", today.get("total_f", "n/a"),
-         f"RX {today.get('rx_f', '-')} / TX {today.get('tx_f', '-')}"),
-        ("Bandwidth month", month.get("total_f", "n/a"),
-         f"RX {month.get('rx_f', '-')} / TX {month.get('tx_f', '-')}"),
+        ("Bandwidth today", today.get("total_f", "n/a"), ""),
+        ("Bandwidth month", month.get("total_f", "n/a"), ""),
     ]
     card_html = "".join(
         f'<div class="card"><div class="k">{esc(k)}</div>'

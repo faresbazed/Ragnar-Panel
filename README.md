@@ -102,7 +102,8 @@ Cloudflare WSS 443**:
   Cloudflare's HTTP proxy cannot carry it.
 
 Per-user expiry, GB quota (Xray Stats API counters) and edit/renew work
-the same as SSH.
+the same as SSH. Xray traffic totals cover VLESS, VMess, Trojan and SSWS;
+AnyTLS uses a separate sing-box service and is not included in those totals.
 When creating an account in the terminal menu or web panel, an optional
 canonical RFC 4122 UUID can be supplied for VLESS/VMess; leave it blank for
 automatic generation. Custom UUIDs must be valid and not already assigned to
@@ -146,6 +147,12 @@ conntrack headroom, `LimitNOFILE` everywhere.
 ### Panel
 - Header: VPS IP, ISP, OS, uptime, CPU/RAM/disk, server time, bandwidth,
   user stats (per protocol + total + online) and live service status
+- Per-user traffic is shown in the SSH and Xray account lists and details.
+  SSH totals include SSH, SSH-WS/SSL and SlowDNS traffic forwarded to the
+  user's SSH backend (port 22 or 109); SlowDNS shares the SSH user's total.
+- Per-user metering is not available for AnyTLS, UDP ZIVPN or UDP Custom in
+  the current integration. The server-wide bandwidth total still includes
+  all interface traffic, but it cannot identify those bytes by user.
 - **Tools:** restart all services, user backup, run the limit checker,
   speed test, listening ports
 - **Clear RAM**, **Reboot VPS**, **Uninstall** — all in the menu
@@ -153,7 +160,8 @@ conntrack headroom, `LimitNOFILE` everywhere.
   `ragnar-watchdog.timer` restarts any dead service every minute
 - SSH traffic accounting uses per-socket `ss -tnpi` byte counters
   (iptables owner-match cannot see daemon relay traffic — accepted
-  sockets belong to the root listener)
+  sockets belong to the root listener); this also captures SlowDNS sessions
+  after DNSTT forwards them into the SSH backend
 
 ### Web panel (3x-ui style)
 - `https://<your-domain>/panel` — username/password login (PBKDF2,
