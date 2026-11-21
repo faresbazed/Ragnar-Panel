@@ -2183,7 +2183,6 @@ def do_user_action(kind, form):
         if op == "delete":
             if kind == "ssh":
                 ragnar.ssh_del(user)
-                ragnar.delete_linux_user(user)
             elif kind == "xray":
                 ragnar.xray_del(user)
                 ragnar.apply_configs()

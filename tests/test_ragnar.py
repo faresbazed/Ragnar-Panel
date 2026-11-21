@@ -333,7 +333,7 @@ class TestSSHDeletion(unittest.TestCase):
                  contextlib.redirect_stdout(io.StringIO()) as output:
                 rc = R.main(["ssh-del", username])
 
-            run.assert_called_once()
+            run.assert_called_once_with(command, capture_output=True, text=True)
             with self.subTest(check="panel record"):
                 self.assertEqual(R.load_ssh().get(username), account)
             with self.subTest(check="CLI result"):
@@ -341,6 +341,44 @@ class TestSSHDeletion(unittest.TestCase):
                 self.assertIn(error, json.loads(output.getvalue())["error"])
             with self.subTest(check="UDP Custom sync"):
                 sync.assert_not_called()
+
+    def test_syncs_removal_only_after_linux_user_is_gone(self):
+        for returncode in (0, 6):
+            with self.subTest(userdel_exit=returncode), \
+                 tempfile.TemporaryDirectory() as base, \
+                 patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+                username = "departing-user"
+                account = R.ssh_add(username, "password", 30, 10, 1)
+
+                def userdel(command, **kwargs):
+                    self.assertEqual(R.load_ssh()[username], account)
+                    return subprocess.CompletedProcess(command, returncode, "", "")
+
+                def sync_udp():
+                    self.assertNotIn(username, R.load_ssh())
+
+                with patch.object(R.subprocess, "run", side_effect=userdel), \
+                     patch.object(R, "sync_udp_custom", side_effect=sync_udp) as sync:
+                    R.ssh_del(username)
+
+                sync.assert_called_once_with()
+                self.assertNotIn(username, R.load_ssh())
+
+    def test_userdel_launch_error_leaves_record(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+            R.ssh_add("alice", "password", 30, 0, 0)
+            with patch.object(R.subprocess, "run", side_effect=FileNotFoundError("userdel")), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(R.main(["ssh-del", "alice"]), 1)
+            self.assertIn("Could not run userdel", json.loads(output.getvalue())["error"])
+            self.assertIn("alice", R.load_ssh())
+
+    def test_unmanaged_linux_user_is_not_touched(self):
+        with patch.object(R.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "not found"):
+                R.ssh_del("not-in-panel")
+        run.assert_not_called()
 
 
 class TestConcurrentWrites(unittest.TestCase):
