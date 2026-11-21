@@ -56,4 +56,9 @@ grep -Fqx 'enable active-demo.service' "$SYSTEMCTL_LOG"
 grep -Fqx 'start active-demo.service' "$SYSTEMCTL_LOG"
 grep -Fqx 'disable inactive-demo.service' "$SYSTEMCTL_LOG"
 grep -Fqx 'stop inactive-demo.service' "$SYSTEMCTL_LOG"
+ragnar_mark_installed xray
+ragnar_was_installed xray
+if ragnar_was_installed sing-box; then exit 1; fi
+if ragnar_mark_installed '../escape' 2>/dev/null; then exit 1; fi
+[ ! -e "$RAGNAR_STATE_DIR/escape" ]
 printf 'install-state helper checks passed\n'

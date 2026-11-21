@@ -371,8 +371,11 @@ systemctl restart haproxy
 # Xray (VLESS / VMESS / Trojan / SSWS over WS) + sing-box (AnyTLS)
 # ---------------------------------------------------------------------
 if ! command -v xray >/dev/null; then
-    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
-        || warn "Xray install failed - install it manually, then run: menu -> Tools -> Restart ALL"
+    if bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; then
+        ragnar_mark_installed xray || warn "Could not record the Xray install for uninstall"
+    else
+        warn "Xray install failed - install it manually, then run: menu -> Tools -> Restart ALL"
+    fi
 fi
 # The upstream Xray installer plants /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf,
 # which overrides ExecStart to /usr/local/etc/xray/config.json. The panel writes users only to
@@ -386,8 +389,11 @@ rm -f /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf
 rmdir /etc/systemd/system/xray.service.d 2>/dev/null || true
 mkdir -p /usr/local/etc/xray
 if ! command -v sing-box >/dev/null; then
-    bash -c "$(curl -fsSL https://sing-box.app/install.sh)" \
-        || warn "sing-box install failed - AnyTLS will stay offline until it is installed"
+    if bash -c "$(curl -fsSL https://sing-box.app/install.sh)"; then
+        ragnar_mark_installed sing-box || warn "Could not record the sing-box install for uninstall"
+    else
+        warn "sing-box install failed - AnyTLS will stay offline until it is installed"
+    fi
 fi
 ragnar_backup_file /etc/systemd/system/xray.service || die "Cannot preserve existing Xray service"
 cat > /etc/systemd/system/xray.service <<'EOF'
@@ -604,9 +610,12 @@ RAGNAR_DIR="$BASE" bash "$BASE/core/slowdns-setup.sh" "${NS:-}" "" "" || \
 # Cloudflared
 # ---------------------------------------------------------------------
 if ! command -v cloudflared >/dev/null; then
-    wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ZARCH}.deb \
-        -O /tmp/cloudflared.deb && dpkg -i /tmp/cloudflared.deb 2>/dev/null \
-        || warn "cloudflared install failed - get it from cloudflare.com"
+    if wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ZARCH}.deb \
+        -O /tmp/cloudflared.deb && dpkg -i /tmp/cloudflared.deb 2>/dev/null; then
+        ragnar_mark_installed cloudflared || warn "Could not record the cloudflared install for uninstall"
+    else
+        warn "cloudflared install failed - get it from cloudflare.com"
+    fi
     rm -f /tmp/cloudflared.deb
 fi
 
