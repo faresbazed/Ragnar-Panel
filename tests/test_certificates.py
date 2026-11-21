@@ -97,6 +97,23 @@ class TestCertificates(unittest.TestCase):
         self.assertEqual({p.name: p.read_bytes() for p in self.certs.iterdir()}, before)
         self.assertFalse((self.base / "restarts").exists())
 
+    def test_expired_lineage_preserves_existing_certificate_on_update(self):
+        csr = subprocess.run([
+            "openssl", "req", "-new", "-key", str(self.live / "privkey.pem"),
+            "-subj", "/CN=example.com"], check=True, capture_output=True).stdout
+        subprocess.run([
+            "openssl", "x509", "-req", "-signkey", str(self.live / "privkey.pem"),
+            "-days", "-1", "-set_serial", "2", "-out", str(self.live / "fullchain.pem")],
+            input=csr, check=True, capture_output=True)
+        expired = subprocess.run([
+            "openssl", "x509", "-in", str(self.live / "fullchain.pem"),
+            "-noout", "-checkend", "0"], capture_output=True)
+        self.assertNotEqual(expired.returncode, 0)
+        before = {p.name: p.read_bytes() for p in self.certs.iterdir()}
+        result = self.install_certificates()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in self.certs.iterdir()}, before)
+
     def test_wrong_domain_does_not_replace_files(self):
         (self.base / "domain").write_text("other.example.com\n")
         before = {p.name: p.read_bytes() for p in self.certs.iterdir()}

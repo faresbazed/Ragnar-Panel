@@ -221,7 +221,8 @@ PY
 # Certificates (refresh from Let's Encrypt before preserving local certs)
 # ---------------------------------------------------------------------
 if [ -n "$DOMAIN" ] && [ -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
-        [ -s "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
+        [ -s "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ] && \
+        openssl x509 -in "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" -noout -checkend 0 >/dev/null 2>&1; then
     bash "$SRC/core/cert-deploy.sh" "/etc/letsencrypt/live/$DOMAIN" || die "Cannot deploy Let's Encrypt certificate"
 elif [ "$IS_UPDATE" = 1 ] && [ -s "$BASE/certs/fullchain.pem" ] && [ -s "$BASE/certs/privkey.pem" ]; then
     log "Preserving existing TLS certificates"
