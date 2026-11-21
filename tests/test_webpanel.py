@@ -141,14 +141,8 @@ for name in ('sales&support', 'sales#support', 'sales+support', 'sales support',
                 for href in re.findall(r'href="([^"]+)"', row):
                     href = html.unescape(href)
                     with self.subTest(kind=kind, name=name, href=href):
-                        response = op.open(BASE_URL + urllib.parse.quote(
-                            href, safe='/?=&%#+'))
-                        body = response.read().decode()
-                        if name == 'sales&support':
-                            edit_form = 'name="days"' in body
-                            print(f'{kind}: GET {href} -> HTTP {response.status}; '
-                                  f'edit_form={edit_form}; '
-                                  f'not_found={"not found" in body}')
+                        body = op.open(BASE_URL + urllib.parse.quote(
+                            href, safe='/?=&%#+')).read().decode()
                         self.assertEqual(urllib.parse.parse_qs(
                             urllib.parse.urlsplit(href).query), {'u': [name]})
                         self.assertNotIn('not found', body)
