@@ -125,7 +125,8 @@ def check_password(username, password):
 def make_session(username):
     cfg = load_web_cfg()
     payload = base64.urlsafe_b64encode(json.dumps(
-        {"u": username, "exp": int(time.time()) + SESSION_TTL}
+        {"u": username, "s": cfg.get("salt"),
+         "exp": int(time.time()) + SESSION_TTL}
     ).encode()).decode()
     sig = hmac.new(cfg["secret"].encode(), payload.encode(),
                    hashlib.sha256).hexdigest()
@@ -141,7 +142,9 @@ def check_session(token):
         if not hmac.compare_digest(sig, good):
             return None
         data = json.loads(base64.urlsafe_b64decode(payload.encode()))
-        if data.get("exp", 0) < time.time() or data.get("u") != cfg["username"]:
+        if (data.get("exp", 0) < time.time()
+                or data.get("u") != cfg["username"]
+                or data.get("s") != cfg.get("salt")):
             return None
         return data["u"]
     except Exception:

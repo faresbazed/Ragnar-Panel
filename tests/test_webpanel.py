@@ -79,6 +79,34 @@ for name in ('sales&support', 'sales#support', 'sales+support', 'sales support',
             {"username": "admin", "password": "testpass123"}).encode()
         return op.open(BASE_URL + "/login", data=data)
 
+    def test_password_change_invalidates_sessions(self):
+        old = self.opener()
+        changer = self.opener()
+        self.login(old).close()
+        self.login(changer).close()
+        try:
+            page = changer.open(BASE_URL + "/settings").read().decode()
+            csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page).group(1)
+            form = urllib.parse.urlencode(
+                {"csrf": csrf, "current": "testpass123",
+                 "new": "changedpass123", "newuser": "admin"}).encode()
+            changer.open(BASE_URL + "/settings/password", data=form).close()
+            with old.open(BASE_URL + "/") as response:
+                self.assertEqual(response.geturl(), BASE_URL + "/login")
+            fresh = self.opener()
+            form = urllib.parse.urlencode(
+                {"username": "admin", "password": "changedpass123"}).encode()
+            with fresh.open(BASE_URL + "/login", data=form) as response:
+                self.assertEqual(response.geturl(), BASE_URL + "/")
+            with fresh.open(BASE_URL + "/") as response:
+                self.assertEqual(response.geturl(), BASE_URL + "/")
+        finally:
+            subprocess.run(
+                [sys.executable, os.path.join(ROOT, "web", "webpanel.py"),
+                 "--set-password", "admin", "testpass123"],
+                env=dict(os.environ, RAGNAR_DIR=self.tmp),
+                capture_output=True, text=True, check=True)
+
     def test_login_flow_and_pages(self):
         import urllib.parse
         op = self.opener()
