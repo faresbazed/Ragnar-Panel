@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.parse import unquote, urlsplit
 
 TMP = tempfile.mkdtemp(prefix="ragnar-test-")
 os.environ["RAGNAR_DIR"] = TMP
@@ -253,6 +255,36 @@ print()
 if failures:
     print("FAILED:", failures); sys.exit(1)
 print("ALL CORE TESTS PASSED")
+
+
+class TestShareLinkPasswords(unittest.TestCase):
+    def test_reserved_password_userinfo(self):
+        with patch.object(ragnar.os, "urandom", return_value=b"\xff" * 16):
+            user = ragnar.xray_add("reserved-password", 30)
+        try:
+            self.assertEqual(user["password"], "/////////////////////w==")
+            links = ragnar.links_for("reserved-password")
+            expected = [
+                ("TROJAN", "vpn.example.com", 80),
+                ("TROJAN", "vpn.example.com", 443),
+                ("TROJAN", "cdn.example.com", 80),
+                ("TROJAN", "cdn.example.com", 443),
+                ("ANYTLS", "vpn.example.com", 443),
+                ("ANYTLS", "vpn.example.com", 8446),
+            ]
+            actual = [(proto, link) for group in links.values()
+                      for proto, link in group.items()
+                      if proto in ("TROJAN", "ANYTLS")]
+            self.assertEqual(len(actual), len(expected))
+            for (proto, link), (expected_proto, host, port) in zip(actual, expected):
+                with self.subTest(protocol=proto, host=host, port=port):
+                    parsed = urlsplit(link)
+                    self.assertEqual(proto, expected_proto)
+                    self.assertEqual(parsed.hostname, host)
+                    self.assertEqual(parsed.port, port)
+                    self.assertEqual(unquote(parsed.username), user["password"])
+        finally:
+            ragnar.xray_del("reserved-password")
 
 
 class TestBorderedTables(unittest.TestCase):
