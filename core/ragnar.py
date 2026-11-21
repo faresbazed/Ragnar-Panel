@@ -1057,10 +1057,12 @@ def sync_linux_user(username, password, expiry, enabled=True):
                                 capture_output=True, text=True).returncode == 0
     except OSError as exc:
         raise SSHSyncError(f"Could not run id: {exc}") from exc
+    created = False
     try:
         if not exists:
             _run_account_command(["useradd", "-m", "-s", "/bin/false",
                                   "-e", str(expiry), username])
+            created = True
         if not enabled:
             _run_account_command(["usermod", "-L", username])
             sync_udp_custom()
@@ -1073,7 +1075,7 @@ def sync_linux_user(username, password, expiry, enabled=True):
         if enabled:
             _run_account_command(["usermod", "-U", username])
     except SSHSyncError as exc:
-        if not exists:
+        if created:
             try:
                 result = subprocess.run(["userdel", "-r", "--", username],
                                         capture_output=True, text=True)

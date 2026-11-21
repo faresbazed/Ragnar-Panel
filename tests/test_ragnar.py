@@ -320,6 +320,18 @@ class TestBorderedTables(unittest.TestCase):
 
 
 class TestSSHCreation(unittest.TestCase):
+    def test_failed_useradd_never_deletes_another_calls_account(self):
+        for failure in (subprocess.CompletedProcess([], 9, '', ''), OSError('cannot execute')):
+            with self.subTest(failure=failure), \
+                 patch.object(R.subprocess, 'run', side_effect=[
+                     subprocess.CompletedProcess([], 1, '', ''), failure]) as run, \
+                 patch.object(R, 'sync_udp_custom') as sync:
+                with self.assertRaisesRegex(R.SSHSyncError, 'useradd'):
+                    R.sync_linux_user('racing-user', 'password', '2030-01-01')
+                self.assertEqual([call.args[0][0] for call in run.call_args_list],
+                                 ['id', 'useradd'])
+                sync.assert_not_called()
+
     def test_disable_locks_before_fallible_updates(self):
         for failure in (None, 'chpasswd', 'chage'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as base, \
@@ -426,7 +438,7 @@ class TestSSHCreation(unittest.TestCase):
                     self.assertNotIn('failed-user:password',
                                      R.gen_udp_custom_config()['auth']['config'])
                     sync.assert_not_called()
-                    self.assertIn('userdel', calls)
+                    self.assertEqual('userdel' in calls, command != 'useradd')
 
 
     def test_foreign_host_account_is_rejected(self):
