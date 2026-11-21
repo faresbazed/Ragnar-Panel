@@ -103,6 +103,56 @@ class TestZivpnExpiry(unittest.TestCase):
         self.assertEqual(self.output.getvalue(), "all users within limits\n")
         self.commands.assert_not_called()
 
+    def test_nonfinite_quota_inputs_are_rejected(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'web'))
+        import webpanel
+
+        for kind in ('ssh', 'xray'):
+            add = getattr(C.ragnar, kind + '_add')
+            edit = getattr(C.ragnar, kind + '_edit')
+            load = getattr(C.ragnar, 'load_' + kind)
+            if kind == 'ssh':
+                add('existing', 'password', 30, 1, 0)
+            else:
+                add('existing', 30, 1, 0)
+            for quota in ('inf', '1e309', 'nan', '-inf'):
+                with self.subTest(kind=kind, quota=quota):
+                    with self.assertRaisesRegex(ValueError, 'finite'):
+                        if kind == 'ssh':
+                            add('invalid', 'password', 30, quota, 0)
+                        else:
+                            add('invalid', 30, quota, 0)
+                    with self.assertRaisesRegex(ValueError, 'finite'):
+                        edit('existing', quota_gb=quota)
+                    self.assertNotIn('invalid', load())
+                    self.assertEqual(load()['existing']['quota_gb'], 1)
+                    form = dict(op='create', user='invalid', password='password',
+                                days='30', quota=quota, iplimit='0')
+                    self.assertIn('finite', webpanel.do_user_action(kind, form))
+                    form['user'] = 'existing'
+                    self.assertIn('finite', webpanel.do_edit(kind, form))
+                    self.assertEqual(load()['existing']['quota_gb'], 1)
+
+    def test_stored_nonfinite_quotas_do_not_block_expiry(self):
+        for kind in ('ssh', 'xray'):
+            add = getattr(C.ragnar, kind + '_add')
+            load = getattr(C.ragnar, 'load_' + kind)
+            save = getattr(C.ragnar, 'save_' + kind)
+            for i in range(4):
+                if kind == 'ssh':
+                    add(str(i), 'password', 30, 0, 0)
+                else:
+                    add(str(i), 30, 0, 0)
+            users = load()
+            for i, quota in enumerate((float('inf'), float('nan'),
+                                       float('-inf'), 1e308)):
+                users[str(i)]['quota_gb'] = quota
+            save(users)
+        C.ragnar.zivpn_add('expired', 'password', -1)
+        with patch.object(sys, 'argv', ['checker', '--apply']):
+            self.assertEqual(C.main(), 0)
+        self.assertFalse(C.ragnar.load_zivpn()['expired']['enabled'])
+
 
 class TestCounterDelta(unittest.TestCase):
     def test_normal_delta(self):
