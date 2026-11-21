@@ -1652,7 +1652,7 @@ def user_table(rows, kind, csrf):
             f'<button class="btn sm grey" name="op" value="renew30" title="Extend 30 days">+30d</button>'
             f'<button class="btn sm grey" name="op" value="{toggle}">{toggle}</button>'
             f'<button class="btn sm red" name="op" value="delete" '
-            f'onclick="return confirm(\'Delete {esc(name)}?\')">delete</button>'
+            f'onclick="return confirm({esc(json.dumps(f"Delete {name}?"))})">delete</button>'
             f"</form></div></td></tr>"
         )
     empty_row = '<tr><td colspan="8" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
@@ -1848,7 +1848,7 @@ def page_users(kind, csrf, flash=""):
                 f'<button class="btn sm grey" name="op" value="renew30" title="Extend 30 days">+30d</button>'
                 f'<button class="btn sm grey" name="op" value="{toggle}">{toggle}</button>'
                 f'<button class="btn sm red" name="op" value="delete" '
-                f'onclick="return confirm(\'Delete {esc(n)}?\')">delete</button>'
+                f'onclick="return confirm({esc(json.dumps(f"Delete {n}?"))})">delete</button>'
                 f"</form></div></td></tr>"
             )
         empty_row = '<tr><td colspan="5" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
