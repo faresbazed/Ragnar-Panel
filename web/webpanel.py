@@ -2040,9 +2040,9 @@ def page_services(csrf, flash=""):
         f'<td style="text-align:right"><button class="btn sm grey" type="button" '
         f'onclick="copyById(\'sd-pub\', this)">Copy</button></td></tr>'
         f'<tr><td>Build</td><td colspan="2" class="mono-cell">dnstt-server turbo (KCP 10ms, window 1024, smux 4MB)</td></tr>'
-        f'<tr><td>MTU</td><td colspan="2" class="mono-cell">{esc(sd_file("mtu", "1232"))}</td></tr>'
+        f'<tr><td>MTU ceiling</td><td colspan="2" class="mono-cell">{esc(sd_file("mtu", "1232"))}</td></tr>'
         f'<tr><td>Backend</td><td colspan="2" class="mono-cell">127.0.0.1:{esc(sd_file("target_port", "22"))}</td></tr>'
-        f'<tr><td>Resolver</td><td colspan="2" class="mono-cell">{esc(sd_file("dns_resolver", "1.1.1.1"))}</td></tr>'
+        f'<tr><td>Suggested client resolver</td><td colspan="2" class="mono-cell">{esc(sd_file("dns_resolver", "1.1.1.1"))}</td></tr>'
         f"</tbody></table></div>"
     )
     return layout(

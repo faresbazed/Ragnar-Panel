@@ -150,6 +150,7 @@ fi
 # guaranteed to match the downloaded release on disk immediately.
 mkdir -p "$BASE"/{core,web}
 rm -rf "$BASE/core/__pycache__" "$BASE/web/__pycache__"
+[ -f "$SRC_DIR/configs/dnstt-server.patch" ] && install -m 644 "$SRC_DIR/configs/dnstt-server.patch" "$BASE/core/dnstt-server.patch"
 for f in ragnar.py checker.py wsproxy.py install-state.sh watchdog.sh slowdns-setup.sh update.sh; do
     [ -f "$SRC_DIR/core/$f" ] && install -m 755 "$SRC_DIR/core/$f" "$BASE/core/$f"
 done

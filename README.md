@@ -138,11 +138,13 @@ conntrack headroom, `LimitNOFILE` everywhere.
   `/etc/vps-panel/slowdns/` layout mirrored on every run. The
   SlowDNS menu mirrors their manager: nameserver + CF token,
   diagnostic, SSH backend switch (OpenSSH 22 ⇄ Dropbear 109),
-  resolver, MTU, key regeneration, and the turbo preset (rebuild +
-  Dropbear backend + MTU 1232). MTU defaults to 1232 on purpose:
-  the server `-mtu` is also the minimum EDNS size demanded from
-  requesters, and a measured carrier path advertising 1395 bytes
-  was FORMERR-rejected at MTU 1400, dropping sessions every minute.
+  client resolver hint, MTU, key regeneration, and the turbo preset
+  (rebuild + Dropbear backend without resetting the MTU). The resolver
+  setting is copied to clients; it does not restrict who can query the
+  server. MTU is a reply ceiling, defaulting to 1232 to avoid fragmentation.
+  The server lowers each reply to the resolver's EDNS limit (512 bytes
+  without EDNS), even if you configure 1484. Recursive resolvers must still
+  forward the tunnel's TXT queries to your delegated server.
 
 ### Panel
 - Header: VPS IP, ISP, OS, uptime, CPU/RAM/disk, server time, bandwidth,

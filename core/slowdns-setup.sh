@@ -3,14 +3,13 @@
 # Ragnar SlowDNS setup - the Ragnar-VPS-Management-Panel SlowDNS,
 # integrated into this panel's environment (2026-11-13).
 #
-# Everything functional is that panel's code, kept intact:
-#   * turbo-patched dnstt-server build (their sed patch, verbatim):
+#   * turbo-patched dnstt-server build:
 #     turbotunnel QueueSize = 1024, smux buffers 4 MB,
 #     KCP SetNoDelay(1, 10, 2, 1) + SetWindowSize(1024, 1024)
 #   * their sysctl UDP buffer step, their NAT cleanup/assert block
 #     (IPv4 + IPv6), their Cloudflare API auto-provisioning,
 #     their systemd unit shape (Nice -15, -mtu, NAT ExecStartPre)
-# What integration changed (plumbing only, no behaviour change):
+# Integration details:
 #   * config lives in THIS panel's settings.json (keys: ns,
 #     slowdns_mtu, slowdns_resolver, slowdns_target) and keys in
 #     $RAGNAR_DIR/slowdns/; the other panel's files in
@@ -19,13 +18,8 @@
 #   * their sshd_config rewrite step is NOT run here - this panel
 #     manages its SSH config itself (both target boxes already carry
 #     the same effective values from the verbatim install).
-#   * default MTU is 1232 (their fast default). Do NOT raise it
-#     blindly: the server -mtu is also the minimum EDNS payload size
-#     demanded from requesters, and a real carrier path was measured
-#     advertising 1395 bytes - MTU 1400 made the server FORMERR-reject
-#     the app's own requests and sessions dropped every minute
-#     (box 2 journal, 2026-11-13). 1400 stays available in the menu
-#     for paths that can carry it.
+#   * MTU is a response ceiling, not a minimum required from a resolver.
+#     The default of 1232 avoids fragmentation on most networks.
 #
 # Usage: slowdns-setup.sh [NS] [CF_TOKEN] [MTU] [RESOLVER] [TARGET]
 # (same argument order as the other panel's ragnar-slowdns-setup;
@@ -39,6 +33,10 @@ THEIR_DIR="/etc/vps-panel/slowdns"
 SETTINGS="$BASE/settings.json"
 BIN=/usr/local/bin/dnstt-server
 MARKER="$SD_DIR/.turbo_kcp_patched"
+BUILD_STAMP="$SD_DIR/.dnstt-build"
+SERVER_PATCH="$BASE/core/dnstt-server.patch"
+DNSTT_RELEASE=20260501
+DNSTT_SHA256=a7b21d3d787570d9127643e360e150d2da7b33aa8039d0546a04dcfe8ee1864f
 BUILD_LOG=/tmp/ragnar-slowdns-build.log
 mkdir -p "$SD_DIR" "$THEIR_DIR"
 
@@ -73,13 +71,24 @@ PY
 
 store_settings() { # ns mtu resolver target - empty keeps the old value
     python3 - "$SETTINGS" "$1" "$2" "$3" "$4" <<'PY'
-import json, os, sys
+import json, os, re, sys
 p = sys.argv[1]
 s = json.load(open(p)) if os.path.exists(p) else {}
 keys = ("ns", "slowdns_mtu", "slowdns_resolver", "slowdns_target")
 for key, val in zip(keys, sys.argv[2:]):
     if val:
-        s[key] = val if key in ("ns", "slowdns_resolver") else int(val)
+        s[key] = val
+ns = s.get("ns") or ""
+if ns and (not isinstance(ns, str) or len(ns.rstrip(".")) > 253
+           or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                  for label in ns.removesuffix(".").split("."))):
+    sys.exit("[slowdns-setup] Invalid SlowDNS nameserver")
+for key, low, high in (("slowdns_mtu", 512, 4096), ("slowdns_target", 1, 65535)):
+    val = s.get(key)
+    if val is not None and val != "":
+        if not re.fullmatch(r"[0-9]{1,5}", str(val)) or not low <= int(val) <= high:
+            sys.exit(f"[slowdns-setup] {key} must be between {low} and {high}")
+        s[key] = int(val)
 json.dump(s, open(p, "w"), indent=2)
 PY
 }
@@ -93,7 +102,7 @@ for f in server.key server.pub; do
 done
 
 CF_TOKEN="${2:-}"
-store_settings "${1:-}" "${3:-}" "${4:-}" "${5:-}"
+store_settings "${1:-}" "${3:-}" "${4:-}" "${5:-}" || exit 1
 NS=$(get_setting ns "")
 MTU=$(get_setting slowdns_mtu 1232)
 RESOLVER=$(get_setting slowdns_resolver 1.1.1.1)
@@ -126,63 +135,66 @@ go_is_new_enough() {
 
 ensure_go() {
     : >>"$BUILD_LOG"
-    local go_bin ga
+    local go_bin ga temp
     go_bin=$(command -v go || true)
+    if ! go_is_new_enough "$go_bin" && [ -x /usr/local/go/bin/go ]; then
+        go_bin=/usr/local/go/bin/go
+    fi
     if ! go_is_new_enough "$go_bin" && [ -x /usr/local/go-1.22/bin/go ]; then
         go_bin=/usr/local/go-1.22/bin/go
     fi
     if ! go_is_new_enough "$go_bin"; then
-        command -v git >/dev/null 2>&1 || \
-            apt-get install -y -q git >>"$BUILD_LOG" 2>&1 || true
         apt-get install -y -q golang-go >>"$BUILD_LOG" 2>&1 || true
         go_bin=$(command -v go || true)
     fi
     if ! go_is_new_enough "$go_bin"; then
         case "$(uname -m)" in aarch64|arm64) ga=arm64 ;; *) ga=amd64 ;; esac
+        temp=$(mktemp -d /usr/local/.ragnar-go.XXXXXX) || return 1
         if wget -q "https://go.dev/dl/go1.22.12.linux-${ga}.tar.gz" \
-                -O /tmp/go.tgz >>"$BUILD_LOG" 2>&1 && \
-           rm -rf /usr/local/go-1.22 /usr/local/go && \
-           tar -C /usr/local -xzf /tmp/go.tgz >>"$BUILD_LOG" 2>&1 && \
-           mv /usr/local/go /usr/local/go-1.22; then
+                -O "$temp/go.tgz" >>"$BUILD_LOG" 2>&1 && \
+           tar -C "$temp" -xzf "$temp/go.tgz" >>"$BUILD_LOG" 2>&1 && \
+           rm -rf /usr/local/go-1.22 && mv "$temp/go" /usr/local/go-1.22; then
             go_bin=/usr/local/go-1.22/bin/go
         fi
-        rm -f /tmp/go.tgz
+        rm -rf "$temp"
     fi
     go_is_new_enough "$go_bin" && { echo "$go_bin"; return 0; }
     return 1
 }
 
 # ---------------------------------------------------------------------
-# 2. Build the turbo-patched dnstt-server (their patch, verbatim sed;
-#    full clone for bamsoftware - its dumb-HTTP git rejects shallow
-#    clones - shallow only for the GitHub mirror)
+# 2. Build the patched dnstt-server against a pinned upstream release.
+#    Replace the live binary only after the complete build succeeds.
 # ---------------------------------------------------------------------
-if [ ! -x "$BIN" ] || [ ! -f "$MARKER" ]; then
-    say "Compiling Turbo-Optimized dnstt-server (KCP NoDelay + 1024 Window + 4MB SMUX buffer)..."
-    GO_BIN=$(ensure_go) || { say "ERROR: no Go >= 1.21 toolchain available - see $BUILD_LOG"; exit 1; }
-    TMP=$(mktemp -d -p /var/tmp)
-    if ! git clone https://www.bamsoftware.com/git/dnstt.git "$TMP/dnstt" >>"$BUILD_LOG" 2>&1 && \
-       ! git clone --depth 1 https://github.com/Mygod/dnstt.git "$TMP/dnstt" >>"$BUILD_LOG" 2>&1; then
-        say "ERROR: could not clone dnstt source - see $BUILD_LOG"
-        rm -rf "$TMP"; exit 1
-    fi
-    if [ -f "$TMP/dnstt/turbotunnel/consts.go" ]; then
-        sed -i 's/QueueSize.*=.*/QueueSize = 1024/' "$TMP/dnstt/turbotunnel/consts.go" || true
-    fi
-    if [ -f "$TMP/dnstt/dnstt-server/main.go" ]; then
-        sed -i 's/MaxStreamBuffer = .*/MaxStreamBuffer = 4 * 1024 * 1024\n\tsmuxConfig.MaxReceiveBuffer = 4 * 1024 * 1024/' "$TMP/dnstt/dnstt-server/main.go" || true
-        sed -i 's/if rc := conn.SetMtu(mtu); !rc {/conn.SetNoDelay(1, 10, 2, 1)\n\t\tconn.SetWindowSize(1024, 1024)\n\t\tif rc := conn.SetMtu(mtu); !rc {/' "$TMP/dnstt/dnstt-server/main.go" || true
-    fi
-    if (cd "$TMP/dnstt/dnstt-server" && \
+build_server() (
+    local tmp staged
+    tmp=$(mktemp -d -p /var/tmp) || return 1
+    staged=$(mktemp "${BIN}.XXXXXX") || { rm -rf "$tmp"; return 1; }
+    trap 'rm -rf "$tmp"; rm -f "$staged"' EXIT
+    curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+        "https://www.bamsoftware.com/software/dnstt/dnstt-${DNSTT_RELEASE}.zip" -o "$tmp/source.zip" &&
+        printf '%s  %s\n' "$DNSTT_SHA256" "$tmp/source.zip" | sha256sum --check --status &&
+        unzip -q "$tmp/source.zip" -d "$tmp" &&
+        cd "$tmp/dnstt-$DNSTT_RELEASE" &&
+        patch --batch --forward --fuzz=0 -p1 < "$SERVER_PATCH" &&
         GOPROXY=https://proxy.golang.org,direct CGO_ENABLED=0 \
-        "$GO_BIN" build -ldflags="-s -w" -trimpath -o "$BIN" .) >>"$BUILD_LOG" 2>&1; then
-        chmod +x "$BIN"; touch "$MARKER"
+            "$GO_BIN" build -ldflags="-s -w" -trimpath -o "$staged" ./dnstt-server &&
+        chmod 755 "$staged" && mv -f "$staged" "$BIN"
+)
+
+BUILD_ID=$(sha256sum < "$SERVER_PATCH") || { say "ERROR: cannot read $SERVER_PATCH"; exit 1; }
+BUILD_ID="$DNSTT_RELEASE $BUILD_ID"
+if [ "${SLOWDNS_REBUILD:-0}" = 1 ] || [ ! -x "$BIN" ] || [ ! -f "$MARKER" ] || \
+   [ "$(cat "$BUILD_STAMP" 2>/dev/null)" != "$BUILD_ID" ]; then
+    say "Building Turbo dnstt-server with adaptive resolver limits..."
+    GO_BIN=$(ensure_go) || { say "ERROR: no Go >= 1.21 toolchain available - see $BUILD_LOG"; exit 1; }
+    if build_server >>"$BUILD_LOG" 2>&1; then
+        printf '%s\n' "$BUILD_ID" > "$BUILD_STAMP" && touch "$MARKER" || exit 1
         say "Built $BIN"
     else
         say "ERROR: dnstt-server build failed - see $BUILD_LOG"
-        rm -rf "$TMP"; exit 1
+        exit 1
     fi
-    rm -rf "$TMP"
 fi
 
 # ---------------------------------------------------------------------
@@ -211,35 +223,50 @@ json.dump(s, open(p, "w"), indent=2)
 PY
 
 # ---------------------------------------------------------------------
-# 4. Optional automatic Cloudflare DNS provisioning (their section 4,
-#    verbatim logic: creates A record dns.<root> + NS record)
+# 4. Optional Cloudflare DNS provisioning (A record + NS delegation)
 # ---------------------------------------------------------------------
+cloudflare() {
+    curl -fsSL --max-time 10 -H "Authorization: Bearer $CF_TOKEN" \
+        "https://api.cloudflare.com/client/v4/$1" "${@:2}"
+}
+
+set_dns_record() {
+    local type="$1" name="$2" content="$3" endpoint="zones/$ZONE_ID/dns_records"
+    local record_id data method=POST
+    record_id=$(cloudflare "$endpoint?type=$type&name=$name" | jq -er '
+        select(.success == true) | (.result[0].id // "")') || return 1
+    if [ -n "$record_id" ]; then
+        method=PATCH
+        endpoint="$endpoint/$record_id"
+    fi
+    data=$(jq -cn --arg type "$type" --arg name "$name" --arg content "$content" '
+        {type: $type, name: $name, content: $content, ttl: 1} +
+        (if $type == "A" then {proxied: false} else {} end)') || return 1
+    cloudflare "$endpoint" -X "$method" -H "Content-Type: application/json" --data "$data" |
+        jq -e '.success == true' >/dev/null
+}
+
 ACTIVE_NS="$NS"
 if [ -n "$CF_TOKEN" ] && [ -n "$ACTIVE_NS" ]; then
-    VPS_IP=$(curl -fsSL4 --max-time 3 icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
-    ROOT_DOM=$(echo "${ACTIVE_NS}" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
+    VPS_IP=$(curl -fsSL4 --max-time 3 https://icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
+    ACTIVE_NS="${ACTIVE_NS%.}"
+    ROOT_DOM="${ACTIVE_NS#*.}"
+    ZONE_ID=""
+    while [[ "$ROOT_DOM" == *.* && "$ROOT_DOM" != "$ACTIVE_NS" ]]; do
+        ZONE_ID=$(cloudflare "zones?name=$ROOT_DOM" | jq -r '.result[0].id // empty' || true)
+        [ -n "$ZONE_ID" ] && break
+        ROOT_DOM="${ROOT_DOM#*.}"
+    done
     A_HOST="dns.${ROOT_DOM}"
-    echo "Configuring Cloudflare DNS records for SlowDNS: ${ACTIVE_NS} -> ${A_HOST} (${VPS_IP})..."
-    ZONE_ID=$(curl -fsSL -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
-        "https://api.cloudflare.com/client/v4/zones?name=${ROOT_DOM}" 2>/dev/null | jq -r '.result[0].id // empty' || true)
     if [ -n "${ZONE_ID}" ]; then
-        OLD_A=$(curl -fsSL -H "Authorization: Bearer ${CF_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=A&name=${A_HOST}" 2>/dev/null | jq -r '.result[0].id // empty' || true)
-        [ -n "${OLD_A}" ] && curl -fsSL -X DELETE -H "Authorization: Bearer ${CF_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${OLD_A}" >/dev/null 2>&1 || true
-        curl -fsSL -X POST -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
-            --data "{\"type\":\"A\",\"name\":\"${A_HOST}\",\"content\":\"${VPS_IP}\",\"ttl\":1,\"proxied\":false}" >/dev/null 2>&1 || true
-        OLD_NS=$(curl -fsSL -H "Authorization: Bearer ${CF_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=NS&name=${ACTIVE_NS}" 2>/dev/null | jq -r '.result[0].id // empty' || true)
-        [ -n "${OLD_NS}" ] && curl -fsSL -X DELETE -H "Authorization: Bearer ${CF_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${OLD_NS}" >/dev/null 2>&1 || true
-        curl -fsSL -X POST -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
-            --data "{\"type\":\"NS\",\"name\":\"${ACTIVE_NS}\",\"content\":\"${A_HOST}\",\"ttl\":1}" >/dev/null 2>&1 || true
-        echo "Cloudflare DNS records created: A (${A_HOST} -> ${VPS_IP}) and NS (${ACTIVE_NS} -> ${A_HOST})!"
+        [ "${ACTIVE_NS,,}" != "${A_HOST,,}" ] || A_HOST="dns-server.${ROOT_DOM}"
+        if set_dns_record A "$A_HOST" "$VPS_IP" && set_dns_record NS "$ACTIVE_NS" "$A_HOST"; then
+            echo "Cloudflare DNS configured: ${ACTIVE_NS} -> ${A_HOST} (${VPS_IP})"
+        else
+            echo "Warning: Cloudflare DNS setup failed; check or create the A and NS records manually."
+        fi
     else
-        echo "Warning: Could not find Cloudflare Zone for ${ROOT_DOM}. Verify your API Token has Zone:Read and DNS:Edit."
+        echo "Warning: No parent Cloudflare zone found for ${ACTIVE_NS}. Verify the token has Zone:Read and DNS:Edit."
     fi
 fi
 
@@ -357,7 +384,8 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable slowdns >/dev/null 2>&1 || true
-systemctl restart slowdns
-say "SlowDNS running: NS ${NS}, MTU ${MTU}, resolver ${RESOLVER}, target 127.0.0.1:${TARGET}"
+if ! systemctl daemon-reload || ! systemctl enable slowdns >/dev/null || ! systemctl restart slowdns; then
+    say "ERROR: could not start SlowDNS - check systemctl status slowdns"
+    exit 1
+fi
+say "SlowDNS started: NS ${NS}, MTU ceiling ${MTU}, suggested client resolver ${RESOLVER}, target 127.0.0.1:${TARGET}"

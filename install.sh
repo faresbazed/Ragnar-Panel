@@ -55,6 +55,7 @@ install -m 755 "$SRC/core/wsproxy.py"       "$BASE/core/wsproxy.py"
 install -m 755 "$SRC/core/install-state.sh" "$BASE/core/install-state.sh"
 install -m 755 "$SRC/core/watchdog.sh"      "$BASE/core/watchdog.sh"
 install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
+install -m 644 "$SRC/configs/dnstt-server.patch" "$BASE/core/dnstt-server.patch" || die "Cannot install DNSTT patch"
 install -m 755 "$SRC/core/update.sh"        "$BASE/core/update.sh"
 install -m 755 "$SRC/menu.sh"               "$BASE/menu.sh"
 install -m 755 "$SRC/uninstall.sh"          "$BASE/uninstall.sh"
@@ -121,7 +122,7 @@ fi
 NEED_APT=1
 if [ "$IS_UPDATE" = 1 ]; then
     NEED_APT=0
-    for req_bin in curl wget tar jq python3 haproxy dropbear vnstat iptables socat openssl; do
+    for req_bin in curl wget tar unzip patch jq python3 haproxy dropbear vnstat iptables socat openssl; do
         if ! command -v "$req_bin" >/dev/null 2>&1; then
             NEED_APT=1
             break
@@ -135,7 +136,7 @@ if [ "$NEED_APT" = 1 ]; then
     dpkg --configure -a || [ "$IS_UPDATE" = 1 ] || die "dpkg configuration failed; fix the package-manager errors above and re-run install.sh"
     apt-get -o DPkg::Lock::Timeout=60 install -f -y || [ "$IS_UPDATE" = 1 ] || die "apt dependency repair failed; fix the errors above and re-run install.sh"
     apt-get -o DPkg::Lock::Timeout=60 update || [ "$IS_UPDATE" = 1 ] || die "apt package-index update failed; check network/repository configuration and re-run install.sh"
-    apt-get -o DPkg::Lock::Timeout=60 install -y curl wget unzip tar jq python3 haproxy dropbear \
+    apt-get -o DPkg::Lock::Timeout=60 install -y curl wget unzip patch tar jq python3 haproxy dropbear \
         openssh-server vnstat iptables iptables-persistent socat openssl cron \
         certbot iproute2 net-tools procps ca-certificates gnupg \
         || [ "$IS_UPDATE" = 1 ] || die "Package installation failed - fix apt (try: sudo dpkg --configure -a) and re-run install.sh"

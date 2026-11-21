@@ -501,14 +501,14 @@ slowdns_menu() {
     local SD="$RAGNAR_DIR/slowdns"
     while true; do
         page_header "SLOWDNS / DNSTT" "DNS-tunnel settings and diagnostics. Changes update the service configuration."
-        local sd_tsv ns pub mtu resolver target
-        sd_tsv=$(python3 - "$RAGNAR_DIR/settings.json" <<'PY' 2>/dev/null
+        local sd_fields ns pub mtu resolver target
+        sd_fields=$(python3 - "$RAGNAR_DIR/settings.json" <<'PY' 2>/dev/null
 import json, sys
 try:
     s = json.load(open(sys.argv[1]))
 except Exception:
     s = {}
-print("\t".join(str(x) for x in [
+print("\x1f".join(str(x) if x is not None else "" for x in [
     s.get("ns", ""),
     s.get("slowdns_pubkey", ""),
     s.get("slowdns_mtu", 1232),
@@ -517,14 +517,21 @@ print("\t".join(str(x) for x in [
 ]))
 PY
 )
-        IFS=$'\t' read -r ns pub mtu resolver target <<<"$sd_tsv"
+        IFS=$'\x1f' read -r ns pub mtu resolver target <<<"$sd_fields"
         mtu=${mtu:-1232}; target=${target:-22}
         echo "Nameserver : ${ns:-not set}"
         echo "Public key : ${pub:-not generated}"
         echo "Endpoint   : UDP 53 -> dnstt 127.0.0.1:5300 -> SSH 127.0.0.1:$target"
         echo "MTU        : $mtu"
         if [ -n "$resolver" ]; then
-            case "$resolver" in *:*) echo "Resolver   : $resolver" ;; *) echo "Resolver   : $resolver:53" ;; esac
+            case "$resolver" in
+                \[*\]:*) ;;
+                \[*\]) resolver="$resolver:53" ;;
+                *:*:*) resolver="[$resolver]:53" ;;
+                *:*) ;;
+                *) resolver="$resolver:53" ;;
+            esac
+            echo "Resolver   : $resolver (client setting)"
         else
             echo "Resolver   : 1.1.1.1:53 (default)"
         fi
@@ -533,16 +540,16 @@ PY
         else
             echo "Build      : NOT INSTALLED (use option 1 or 7)"
         fi
-        echo "Tip: turbo = KCP patch + Dropbear backend (option 7). Keep MTU at"
-        echo "     1232: bigger MTUs make some resolver paths reject the app."
+        echo "Tip: MTU is a maximum. Replies adapt to the resolver's limit."
+        echo "     1232 is recommended to avoid UDP fragmentation."
         section "CONFIGURATION"
         opt 1 "Set nameserver & start" "Optionally create DNS records with Cloudflare"
         opt 2 "Run diagnostics" "Check UDP listener and NS delegation"
         opt 3 "Change SSH backend" "OpenSSH :22 or Dropbear :109"
-        opt 4 "Set resolver" "Choose the upstream DNS resolver"
+        opt 4 "Set resolver" "Suggest an endpoint for clients; does not restrict access"
         opt 5 "Set MTU" "1232 is the safest default"
         opt 6 "Regenerate keys" "Create a new server key pair"
-        opt 7 "Apply Turbo preset" "Rebuild, Dropbear backend and MTU 1232"
+        opt 7 "Apply Turbo preset" "Rebuild and use Dropbear; keep the configured MTU"
         section "SERVICE"
         opt 8 "Restart SlowDNS" "Restart with the current settings"
         opt 9 "Stop SlowDNS" "Stop and disable the service"
@@ -574,12 +581,14 @@ except Exception:
             3) echo "Backend: 1) OpenSSH 22   2) Dropbear 109 (lighter handshake)"
                read -rp "Choice [1-2]: " b
                if [ "$b" = "2" ]; then t=109; else t=22; fi
-               RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh" "$ns" "" "$mtu" "" "$t"
-               echo "Backend now 127.0.0.1:$t"; pause ;;
-            4) read -rp "Resolver IP (e.g. 8.8.8.8, 1.1.1.1, or this server's IP): " v
+               if RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh" "$ns" "" "$mtu" "" "$t"; then
+                   echo "Backend now 127.0.0.1:$t"
+               fi
+               pause ;;
+            4) read -rp "Client resolver (e.g. 1.1.1.1, [2606:4700:4700::1111]:53, or this VPS IP): " v
                [ -n "$v" ] && RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh" "$ns" "" "$mtu" "$v" "$target"
                pause ;;
-            5) read -rp "MTU (1232 = default/safest, 512 = strict networks, 1400 = only if your path allows it): " v
+            5) read -rp "Maximum DNS reply size (512-4096, default 1232): " v
                v=${v:-1232}
                RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh" "$ns" "" "$v" "" "$target"
                pause ;;
@@ -587,11 +596,11 @@ except Exception:
                RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh"
                echo "New public key: $(cat "$SD/server.pub" 2>/dev/null)"
                pause ;;
-            7) rm -f /usr/local/bin/dnstt-server "$SD/.turbo_kcp_patched" /etc/vps-panel/slowdns/.turbo_kcp_patched
-               RAGNAR_DIR="$RAGNAR_DIR" bash "$RAGNAR_DIR/core/slowdns-setup.sh" "$ns" "" "1232" "" "109"
-               echo "Turbo preset applied: rebuilt binary, Dropbear backend, MTU 1232"
+            7) if RAGNAR_DIR="$RAGNAR_DIR" SLOWDNS_REBUILD=1 bash "$RAGNAR_DIR/core/slowdns-setup.sh" "" "" "" "" "109"; then
+                   echo "Turbo preset applied: rebuilt binary and selected Dropbear; kept MTU $mtu"
+               fi
                pause ;;
-            8) systemctl restart slowdns; echo restarted; pause ;;
+            8) systemctl restart slowdns && echo restarted; pause ;;
             9) systemctl stop slowdns; systemctl disable slowdns 2>/dev/null; echo stopped; pause ;;
             0) return ;;
             *) invalid_choice ;;
