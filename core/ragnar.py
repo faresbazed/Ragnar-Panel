@@ -354,16 +354,9 @@ def zivpn_edit(name, days=None, password=None, extend=False, enable=None):
     if name not in users:
         raise ValueError(f"ZIVPN user '{name}' not found")
     u = users[name]
-    if days is not None:
-        if extend:
-            base = max(_dt.date.fromisoformat(u["expiry"]), _today())
-            u["expiry"] = (base + _dt.timedelta(days=int(days))).isoformat()
-        else:
-            u["expiry"] = expiry_from_days(days)
+    _edit_account_limits(u, days, None, extend, enable)
     if password:
         u["password"] = password
-    if enable is not None:
-        u["enabled"] = bool(enable)
     _write_json(ZIVPN_DB, {"users": users})
     return u
 
@@ -601,7 +594,7 @@ def ip_limit_exceeded(distinct_ips, ip_limit):
     return len(set(distinct_ips)) > int(ip_limit)
 
 
-def enforcement_plan(ssh_users, xray_users, live_ips):
+def enforcement_plan(ssh_users, xray_users, live_ips, zivpn_users=None):
     """Return {action-list} for expired / over-quota / over-IP users.
 
     Already-disabled accounts are skipped so the 1-minute timer does not
@@ -625,6 +618,9 @@ def enforcement_plan(ssh_users, xray_users, live_ips):
             plan.append({"kind": "xray", "user": name, "action": "remove", "reason": "expired"})
         elif quota_exceeded(u.get("used_bytes", 0), u.get("quota_gb", 0)):
             plan.append({"kind": "xray", "user": name, "action": "remove", "reason": "quota"})
+    for name, u in (zivpn_users or {}).items():
+        if u.get("enabled", True) and is_expired(u["expiry"]):
+            plan.append({"kind": "zivpn", "user": name, "action": "remove", "reason": "expired"})
     return plan
 
 

@@ -4,6 +4,7 @@ Starts the real server (plain HTTP - the fixture has no certs) on a
 scratch port and drives it with urllib: login flow, dashboard, user
 create/list over HTTP, and the Xray links page.
 """
+import html
 import http.cookiejar
 import json
 import os
@@ -36,6 +37,9 @@ import ragnar
 ragnar.ssh_add('webuser', 'pw123456', 30, 0, 0)
 ragnar.xray_add('xuser', 30, 0, 0)
 ragnar.zivpn_add('zuser', 'zpw12345', 30)
+for name in ('sales&support', 'sales#support', 'sales+support', 'sales support', 'sales"<support>'):
+    ragnar.xray_add(name, 30, 0, 0)
+    ragnar.zivpn_add(name, 'zpw12345', 30)
 """], cwd=ROOT, env=env, capture_output=True, text=True)
         assert seed.returncode == 0, seed.stderr
         subprocess.run([sys.executable, os.path.join(ROOT, "web", "webpanel.py"),
@@ -124,6 +128,28 @@ ragnar.zivpn_add('zuser', 'zpw12345', 30)
         xray_page = op.open(BASE_URL + "/xray").read().decode()
         self.assertIn('name="uuid"', xray_page)
         self.assertIn("Auto-generated if blank", xray_page)
+
+    def test_reserved_account_links(self):
+        op = self.opener()
+        self.login(op)
+        names = ('sales&support', 'sales#support', 'sales+support',
+                 'sales support', 'sales"<support>')
+        for kind in ('zivpn', 'xray'):
+            page = op.open(BASE_URL + '/' + kind).read().decode()
+            for name in names:
+                row = next(row for row in page.split('<tr ')
+                           if f'<b>{html.escape(name)}</b>' in row)
+                for href in re.findall(r'href="([^"]+)"', row):
+                    href = html.unescape(href)
+                    with self.subTest(kind=kind, name=name, href=href):
+                        body = op.open(BASE_URL + urllib.parse.quote(
+                            href, safe='/?=&%#+')).read().decode()
+                        self.assertEqual(urllib.parse.parse_qs(
+                            urllib.parse.urlsplit(href).query), {'u': [name]})
+                        self.assertNotIn('not found', body)
+                        if '/edit?' in href:
+                            self.assertIn('name="days"', body)
+                            self.assertIn('value="' + html.escape(name) + '"', body)
 
     def test_custom_uuid_xray_create_action(self):
         custom_uuid = "123e4567-e89b-42d3-a456-426614174000"

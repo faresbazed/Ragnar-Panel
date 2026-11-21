@@ -1,9 +1,9 @@
+import contextlib
 import io
 import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "core"))
@@ -26,6 +26,80 @@ SLOWDNS_SSH_SAMPLE = """Recv-Q Send-Q Local Address:Port Peer Address:Port Proce
 0 0 127.0.0.1:109 127.0.0.1:51235 users:(("dropbear",pid=8889,fd=5))
 \t cubic bytes_sent:100 bytes_received:200
 """
+
+
+class TestZivpnExpiry(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        base = self.temp.name
+        paths = {"BASE": base, "DB_DIR": os.path.join(base, "db"),
+                 "SETTINGS": os.path.join(base, "settings.json")}
+        for key, filename in (("SSH_DB", "ssh.json"), ("XRAY_DB", "xray.json"),
+                              ("ZIVPN_DB", "zivpn.json"),
+                              ("XRAY_LAST_SEEN", "xray_last_seen.json")):
+            paths[key] = os.path.join(base, "db", filename)
+        self.stack.enter_context(patch.multiple(C.ragnar, **paths))
+        self.stack.enter_context(patch.object(C, "run", return_value=""))
+        self.commands = self.stack.enter_context(patch.object(C.ragnar.subprocess, "run"))
+        self.output = io.StringIO()
+        self.stack.enter_context(contextlib.redirect_stdout(self.output))
+
+    def seed(self):
+        for name, days in (("expired", -1), ("active", 1), ("today", 0),
+                           ("disabled", -1)):
+            C.ragnar.zivpn_add(name, name + "-password", days)
+        C.ragnar.zivpn_edit("disabled", enable=False)
+        self.config = os.path.join(C.ragnar.BASE, "zivpn", "config.json")
+        C.ragnar._write_json(self.config, {"auth": {"config": [
+            "expired-password", "active-password", "today-password"]}})
+
+    def test_apply_disables_only_expired_and_refreshes_live_config(self):
+        self.seed()
+        with patch.object(sys, "argv", ["checker", "--apply"]):
+            self.assertEqual(C.main(), 0)
+            self.assertFalse(C.ragnar.load_zivpn()["expired"]["enabled"])
+            self.assertTrue(C.ragnar.load_zivpn()["active"]["enabled"])
+            self.assertTrue(C.ragnar.load_zivpn()["today"]["enabled"])
+            self.assertEqual(C.ragnar._read_json(self.config, {})["auth"]["config"],
+                             ["active-password", "today-password"])
+            self.assertEqual(self.output.getvalue(), "zivpn/expired: remove (expired)\n")
+            self.commands.assert_called_once()
+            self.assertIn("zivpn", self.commands.call_args.args[0])
+            self.commands.reset_mock()
+            C.main()
+            self.commands.assert_not_called()
+
+    def test_dry_run_preserves_users_and_config(self):
+        self.seed()
+        with patch.object(sys, "argv", ["checker"]):
+            C.main()
+        self.assertEqual(self.output.getvalue(), "zivpn/expired: remove (expired)\n")
+        self.assertTrue(C.ragnar.load_zivpn()["expired"]["enabled"])
+        self.assertIn("expired-password", C.ragnar._read_json(self.config, {})["auth"]["config"])
+        self.commands.assert_not_called()
+
+    def test_renewal_restores_only_checker_disabled_zivpn_password(self):
+        self.seed()
+        with patch.object(sys, "argv", ["checker", "--apply"]):
+            self.assertEqual(C.main(), 0)
+        for name in ("expired", "disabled"):
+            self.assertFalse(C.ragnar.load_zivpn()[name]["enabled"])
+            self.assertEqual(C.ragnar.main(
+                ["zivpn-edit", name, "--days", "30", "--extend"]), 0)
+        users = C.ragnar.load_zivpn()
+        self.assertTrue(users["expired"]["enabled"])
+        self.assertFalse(users["disabled"]["enabled"])
+        self.assertEqual(C.ragnar._read_json(self.config, {})["auth"]["config"],
+                         ["active-password", "expired-password", "today-password"])
+
+    def test_empty_users_do_not_restart(self):
+        with patch.object(sys, "argv", ["checker", "--apply"]):
+            C.main()
+        self.assertEqual(self.output.getvalue(), "all users within limits\n")
+        self.commands.assert_not_called()
 
 
 class TestCounterDelta(unittest.TestCase):
@@ -95,7 +169,7 @@ class TestCheckerLocks(unittest.TestCase):
         self.addCleanup(fixture.cleanup)
         self.ragnar = C.ragnar
         paths = {key: os.path.join(fixture.name, key)
-                 for key in ("SSH_DB", "XRAY_DB", "XRAY_LAST_SEEN")}
+                 for key in ("SSH_DB", "XRAY_DB", "ZIVPN_DB", "XRAY_LAST_SEEN")}
         overrides = patch.multiple(self.ragnar, BASE=fixture.name, **paths)
         overrides.start()
         self.addCleanup(overrides.stop)
@@ -106,7 +180,7 @@ class TestCheckerLocks(unittest.TestCase):
              patch.object(C.subprocess, "run"), \
              patch.object(self.ragnar, "apply_configs"), \
              patch.object(self.ragnar, "sync_udp_custom"), \
-             redirect_stdout(io.StringIO()) as log:
+             contextlib.redirect_stdout(io.StringIO()) as log:
             self.assertEqual(C.main(), 0)
         return log.getvalue()
 
@@ -114,7 +188,7 @@ class TestCheckerLocks(unittest.TestCase):
         with patch.object(self.ragnar.subprocess, "run") as run, \
              patch.object(self.ragnar, "sync_udp_custom"), \
              patch.object(self.ragnar, "fmt_ssh_info", return_value=""), \
-             redirect_stdout(io.StringIO()):
+             contextlib.redirect_stdout(io.StringIO()):
             run.return_value.returncode = 0
             self.assertEqual(self.ragnar.main(["ssh-edit", user, *args]), 0)
         return [call.args[0] for call in run.call_args_list]
