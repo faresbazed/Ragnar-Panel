@@ -371,8 +371,15 @@ systemctl restart haproxy
 # Xray (VLESS / VMESS / Trojan / SSWS over WS) + sing-box (AnyTLS)
 # ---------------------------------------------------------------------
 if ! command -v xray >/dev/null; then
+    # Uninstall deletes the upstream Xray paths, so only claim a clean install.
+    xray_fresh=1
+    for p in /usr/local/etc/xray /usr/local/share/xray /var/log/xray \
+             /etc/systemd/system/xray.service /etc/systemd/system/xray@.service \
+             /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d; do
+        [ -e "$p" ] && xray_fresh=0
+    done
     if bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; then
-        ragnar_mark_installed xray || warn "Could not record the Xray install for uninstall"
+        [ "$xray_fresh" = 0 ] || ragnar_mark_installed xray || warn "Could not record the Xray install for uninstall"
     else
         warn "Xray install failed - install it manually, then run: menu -> Tools -> Restart ALL"
     fi
