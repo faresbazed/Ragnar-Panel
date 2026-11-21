@@ -198,6 +198,28 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
                                 env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_ssh_delete_reports_busy_linux_user(self):
+        code = """
+import subprocess
+import sys
+from unittest.mock import patch
+sys.path[:0] = ['core', 'web']
+import ragnar, webpanel
+
+ragnar.ssh_add('busy-web-user', 'password', 30, 0, 0)
+error = 'userdel: user busy-web-user is currently used by process 4242'
+with patch.object(ragnar.pwd, 'getpwnam'), patch.object(ragnar.subprocess, 'run',
+                  return_value=subprocess.CompletedProcess([], 8, '', error)):
+    msg = webpanel.do_user_action('ssh', {'op': 'delete', 'user': 'busy-web-user'})
+assert msg.startswith('Error:') and error in msg, msg
+assert 'busy-web-user' in ragnar.load_ssh()
+"""
+        with tempfile.TemporaryDirectory() as base:
+            env = dict(os.environ, RAGNAR_DIR=base)
+            result = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
+                                    env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_edit_flows(self):
         import urllib.parse
         op = self.opener()

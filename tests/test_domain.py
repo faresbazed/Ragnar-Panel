@@ -2,9 +2,11 @@
 """Exercise the terminal domain setter without touching host services."""
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -79,6 +81,93 @@ class TestDomainMenu(unittest.TestCase):
         result = self.set_domain("new.example.com")
         self.assertIn("saved", result.stdout)
         self.assertEqual(self.resolved_domain(), "new.example.com")
+
+    def test_quick_tunnel_exit_returns_to_menu(self):
+        menu = (ROOT / "menu.sh").read_text()
+        function = menu[menu.index("cloudflared_menu() {"):]
+        function = function[:function.index("\n# ---------------------------------------------------------------------")]
+        script = '\n'.join([
+            function,
+            'page_header() { :; }; section() { :; }; opt() { :; }',
+            'svc_dot_cf() { :; }; pause() { :; }',
+            'menu_choice() { read -r MENU_CHOICE; }',
+            'cloudflared_menu',
+            'echo MENU_RETURNED',
+            'test -z "$(trap -p INT)"',
+        ])
+        for status in (0, 7):
+            with self.subTest(status=status):
+                stub = self.base / "cloudflared"
+                stub.write_text(f'#!/bin/sh\nexit {status}\n')
+                stub.chmod(0o755)
+                result = subprocess.run(["bash", "-c", script], input="4\n0\n",
+                                        env=self.env, capture_output=True,
+                                        text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("MENU_RETURNED", result.stdout)
+
+    def test_quick_tunnel_lives_until_interrupted(self):
+        stub = self.base / "cloudflared"
+        stub.write_text('''#!/usr/bin/env python3
+import os, signal, time
+from pathlib import Path
+base = Path(os.environ["RAGNAR_DIR"])
+def stop(signum, frame):
+    (base / "stopped").write_text(signal.Signals(signum).name)
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+(base / "pid").write_text(str(os.getpid()))
+print("https://xxx.trycloudflare.com", flush=True)
+print("\\n".join("log line %d" % i for i in range(40)), flush=True)
+while True:
+    time.sleep(0.1)
+''')
+        stub.chmod(0o755)
+        menu = (ROOT / "menu.sh").read_text()
+        function = menu[menu.index("cloudflared_menu() {"):]
+        function = function[:function.index("\n# ---------------------------------------------------------------------")]
+        script = '\n'.join([
+            function,
+            'page_header() { echo MENU; }; section() { :; }; opt() { :; }',
+            'svc_dot_cf() { :; }; pause() { :; }',
+            'menu_choice() { read -r MENU_CHOICE; }',
+            'cloudflared_menu',
+            'echo MENU_RETURNED',
+            'test -z "$(trap -p INT)"',
+        ])
+        proc = subprocess.Popen(["bash", "-c", script], env=self.env,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                start_new_session=True)
+        try:
+            proc.stdin.write("4\n")
+            proc.stdin.flush()
+            deadline = time.monotonic() + 5
+            while not (self.base / "pid").exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue((self.base / "pid").exists(), "cloudflared did not start")
+            pid = int((self.base / "pid").read_text())
+            time.sleep(12)
+            stopped = self.base / "stopped"
+            self.assertFalse(stopped.exists(),
+                             f"quick tunnel stopped before admin interrupt: {stopped.read_text() if stopped.exists() else ''}")
+            os.kill(pid, 0)
+            os.killpg(proc.pid, signal.SIGINT)
+            output, _ = proc.communicate("0\n", timeout=5)
+            self.assertEqual(proc.returncode, 0, output)
+            self.assertEqual(stopped.read_text(), "SIGINT")
+            self.assertIn("https://xxx.trycloudflare.com", output)
+            self.assertIn("log line 39", output)
+            self.assertEqual(output.count("MENU\n"), 2, output)
+            self.assertIn("MENU_RETURNED", output)
+            self.assertIn("Ctrl+C", output)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
 
 
 if __name__ == "__main__":
