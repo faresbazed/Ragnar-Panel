@@ -472,8 +472,14 @@ def zivpn_edit(name, days=None, password=None, extend=False, enable=None):
 
 
 def zivpn_passwords():
-    return [u["password"] for u in load_zivpn().values()
-            if u.get("enabled", True) and not is_expired(u["expiry"])]
+    """Active passwords, minus any an inactive account also holds (legacy duplicates)."""
+    active, revoked = [], set()
+    for u in load_zivpn().values():
+        if u.get("enabled", True) and not is_expired(u["expiry"]):
+            active.append(u["password"])
+        else:
+            revoked.add(u["password"])
+    return [p for p in active if p not in revoked]
 
 
 # --------------------------------------------------------------------------
