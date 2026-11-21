@@ -1634,9 +1634,9 @@ def user_table(rows, kind, csrf):
         toggle = "enable" if not enabled else "disable"
         extra_link = ""
         if kind == "xray":
-            extra_link = f'<a class="btn sm grey" href="{U("/xray/links")}?u={esc(name)}">Links</a> '
+            extra_link = f'<a class="btn sm grey" href="{U("/xray/links")}?u={esc(urllib.parse.quote(name, safe=""))}">Links</a> '
         elif kind == "ssh":
-            extra_link = f'<a class="btn sm grey" href="{U("/ssh/info")}?u={esc(name)}">Info</a> '
+            extra_link = f'<a class="btn sm grey" href="{U("/ssh/info")}?u={esc(urllib.parse.quote(name, safe=""))}">Info</a> '
         out.append(
             f'<tr data-user="{esc(name.lower())}" data-state="{rstate}" data-expiring="{exp_attr}">'
             f'<td class="mono-cell"><b>{esc(name)}</b></td>'
@@ -1646,7 +1646,7 @@ def user_table(rows, kind, csrf):
             f'<td class="mono-cell">{esc(u.get("ip_limit") or "∞")}</td>'
             f"<td>{status}</td>"
             f'<td><div class="row-actions">{extra_link}'
-            f'<a class="btn sm" href="{U("/" + kind + "/edit")}?u={esc(name)}">Edit</a>'
+            f'<a class="btn sm" href="{U("/" + kind + "/edit")}?u={esc(urllib.parse.quote(name, safe=""))}">Edit</a>'
             f'<form class="inline" method="post" action="{U("/" + kind + "/action")}">'
             f'<input type="hidden" name="csrf" value="{csrf}">'
             f'<input type="hidden" name="user" value="{esc(name)}">'
@@ -1842,7 +1842,7 @@ def page_users(kind, csrf, flash=""):
                 f'<td class="mono-cell"><b>{esc(n)}</b></td><td class="mono-cell">{esc(u["expiry"])}</td>'
                 f"<td>{_days_badge(d_left)}</td><td>{st_pill}</td>"
                 f'<td><div class="row-actions">'
-                f'<a class="btn sm" href="{U("/zivpn/edit")}?u={esc(n)}">Edit</a>'
+                f'<a class="btn sm" href="{U("/zivpn/edit")}?u={esc(urllib.parse.quote(n, safe=""))}">Edit</a>'
                 f'<form class="inline" method="post" action="{U("/zivpn/action")}">'
                 f'<input type="hidden" name="csrf" value="{csrf}">'
                 f'<input type="hidden" name="user" value="{esc(n)}">'
