@@ -22,6 +22,7 @@ import json
 import os
 import pwd
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -459,13 +460,23 @@ def gen_singbox_config():
     }
 
 
+def _zivpn_fallback_password():
+    raw = _read_json(SETTINGS, {})
+    password = raw.get("zivpn_fallback_password")
+    if not password:
+        password = secrets.token_hex(32)
+        raw["zivpn_fallback_password"] = password
+        _write_json(SETTINGS, raw)
+    return password
+
+
 def gen_zivpn_config():
     return {
         "listen": ":5667",
         "cert": os.path.join(BASE, "certs", "zivpn.crt"),
         "key": os.path.join(BASE, "certs", "zivpn.key"),
         "obfs": "zivpn",
-        "auth": {"mode": "passwords", "config": zivpn_passwords() or ["ragnar-default-change-me"]},
+        "auth": {"mode": "passwords", "config": zivpn_passwords() or [_zivpn_fallback_password()]},
     }
 
 
