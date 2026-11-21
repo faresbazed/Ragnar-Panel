@@ -260,6 +260,12 @@ def ssh_add(username, password, days, quota_gb, ip_limit):
     users = load_ssh()
     if username in users:
         raise ValueError(f"SSH user '{username}' already exists")
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        pass
+    else:
+        raise ValueError(f"Linux user '{username}' already exists and is not managed by the panel")
     users[username] = {
         "password": password,
         "created": _today().isoformat(),
