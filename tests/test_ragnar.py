@@ -320,6 +320,26 @@ class TestBorderedTables(unittest.TestCase):
 
 
 class TestSSHCreation(unittest.TestCase):
+    def test_useradd_home_failure_rolls_back_created_account(self):
+        for cleanup_status in (0, 8):
+            with self.subTest(cleanup_status=cleanup_status), \
+                 tempfile.TemporaryDirectory() as base, \
+                 patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')), \
+                 patch.object(R.subprocess, 'run', side_effect=[
+                     subprocess.CompletedProcess([], 1, '', ''),
+                     subprocess.CompletedProcess([], 12, '', 'cannot create home'),
+                     subprocess.CompletedProcess([], cleanup_status, '', '')]) as run, \
+                 patch.object(R, 'sync_udp_custom') as sync:
+                with self.assertRaisesRegex(R.SSHSyncError, 'useradd exited with status 12') as error:
+                    R.ssh_create('partial-user', 'password', 30, 0, 0)
+                self.assertEqual(run.call_args_list[-1].args[0],
+                                 ['userdel', '-r', '--', 'partial-user'])
+                self.assertEqual('rollback failed' in str(error.exception), bool(cleanup_status))
+                self.assertEqual(R.load_ssh(), {})
+                self.assertNotIn('partial-user:password',
+                                 R.gen_udp_custom_config()['auth']['config'])
+                sync.assert_not_called()
+
     def test_failed_useradd_never_deletes_another_calls_account(self):
         for failure in (subprocess.CompletedProcess([], 9, '', ''), OSError('cannot execute')):
             with self.subTest(failure=failure), \

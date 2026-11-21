@@ -1037,7 +1037,9 @@ def apply_configs(force_restart=False):
 
 
 class SSHSyncError(RuntimeError):
-    pass
+    def __init__(self, message, returncode=None):
+        super().__init__(message)
+        self.returncode = returncode
 
 
 def _run_account_command(cmd, **kwargs):
@@ -1046,7 +1048,7 @@ def _run_account_command(cmd, **kwargs):
     except OSError as exc:
         raise SSHSyncError(f"Could not run {cmd[0]}: {exc}") from exc
     if result.returncode:
-        raise SSHSyncError(f"{cmd[0]} exited with status {result.returncode}")
+        raise SSHSyncError(f"{cmd[0]} exited with status {result.returncode}", result.returncode)
 
 
 def sync_linux_user(username, password, expiry, enabled=True):
@@ -1060,8 +1062,12 @@ def sync_linux_user(username, password, expiry, enabled=True):
     created = False
     try:
         if not exists:
-            _run_account_command(["useradd", "-m", "-s", "/bin/false",
-                                  "-e", str(expiry), username])
+            try:
+                _run_account_command(["useradd", "-m", "-s", "/bin/false",
+                                      "-e", str(expiry), username])
+            except SSHSyncError as exc:
+                created = exc.returncode == 12
+                raise
             created = True
         if not enabled:
             _run_account_command(["usermod", "-L", username])
