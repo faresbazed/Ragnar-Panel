@@ -2181,16 +2181,18 @@ def do_user_action(kind, form):
                 ragnar.apply_configs()
             return f"User '{user}' created."
         if op == "delete":
+            message = f"User '{user}' deleted."
             if kind == "ssh":
-                ragnar.ssh_del(user)
-                ragnar.delete_linux_user(user)
+                warning = ragnar.ssh_del(user)
+                if warning:
+                    return f"{message} Warning: {warning}"
             elif kind == "xray":
                 ragnar.xray_del(user)
                 ragnar.apply_configs()
             elif kind == "zivpn":
                 ragnar.zivpn_del(user)
                 ragnar.apply_configs()
-            return f"User '{user}' deleted."
+            return message
         if op in ("enable", "disable"):
             enable = op == "enable"
             if kind == "ssh":

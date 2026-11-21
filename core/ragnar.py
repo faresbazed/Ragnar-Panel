@@ -289,13 +289,43 @@ def ssh_edit(username, days=None, quota_gb=None, ip_limit=None, password=None,
     return u
 
 
+class SSHDeletionError(RuntimeError):
+    pass
+
+
 @account_transaction
 def ssh_del(username):
+    """Remove the Linux account and return a warning if host cleanup failed."""
     users = load_ssh()
     if username not in users:
         raise ValueError(f"SSH user '{username}' not found")
+    _validate_username(username)
+    try:
+        result = subprocess.run(["userdel", "-r", "--", username],
+                                capture_output=True, text=True)
+    except OSError as exc:
+        raise SSHDeletionError(f"Could not run userdel for '{username}': {exc}") from exc
+    warning = None
+    # userdel exits 6 if the Linux account is already absent.
+    if result.returncode not in (0, 6):
+        detail = result.stderr.strip()
+        warning = f"userdel exited with status {result.returncode}"
+        if detail:
+            warning += f": {detail}"
+        # userdel can remove the account even when it cannot remove the home directory.
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            pass
+        except OSError as exc:
+            raise SSHDeletionError(
+                f"Could not verify deletion of '{username}' after {warning}: {exc}") from exc
+        else:
+            raise SSHDeletionError(f"Could not delete Linux user '{username}': {warning}")
     del users[username]
     save_ssh(users)
+    sync_udp_custom()
+    return warning
 
 
 # --------------------------------------------------------------------------
@@ -995,14 +1025,6 @@ def sync_linux_user(username, password, expiry, enabled=True):
     sync_udp_custom()
 
 
-def delete_linux_user(username):
-    """Remove Linux account and sync UDP Custom auth list."""
-    _validate_username(username)
-    subprocess.run(["userdel", "-r", "--", username],
-                   capture_output=True, text=True)
-    sync_udp_custom()
-
-
 # --------------------------------------------------------------------------
 # Human-readable display (the menu prints these verbatim; pass --json to
 # the list/info/links commands to get the old machine format instead)
@@ -1228,8 +1250,10 @@ def main(argv):
             sync_linux_user(args[0], u["password"], u["expiry"], u.get("enabled", True))
             print(f"SSH user '{args[0]}' saved.\n\n{fmt_ssh_info(args[0])}")
         elif cmd == "ssh-del":
-            ssh_del(args[0]); delete_linux_user(args[0])
+            warning = ssh_del(args[0])
             print(f"SSH user '{args[0]}' deleted.")
+            if warning:
+                print(f"Warning: {warning}")
         elif cmd == "ssh-list":
             data = _list_rows("ssh")
             _p(data) if "--json" in args else print(fmt_users(data, "SSH USERS"))
@@ -1319,7 +1343,7 @@ def main(argv):
         else:
             print(f"unknown command: {cmd}", file=sys.stderr)
             return 2
-    except (ValueError, IndexError) as exc:
+    except (ValueError, IndexError, SSHDeletionError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
     return 0

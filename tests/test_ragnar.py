@@ -319,6 +319,88 @@ class TestBorderedTables(unittest.TestCase):
         self.assertEqual(R._fmt_bytes_short(int(1.13 * 1024 ** 3)), "1.13G")
 
 
+class TestSSHDeletion(unittest.TestCase):
+    def test_busy_linux_user_keeps_panel_record(self):
+        username = "active-user"
+        command = ["userdel", "-r", "--", username]
+        error = f"userdel: user {username} is currently used by process 4242"
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+            account = R.ssh_add(username, "password", 30, 10, 1)
+            with patch.object(R.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    command, 8, "", error + "\n")) as run, \
+                 patch.object(R.pwd, "getpwnam"), \
+                 patch.object(R, "sync_udp_custom") as sync, \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                rc = R.main(["ssh-del", username])
+
+            run.assert_called_once_with(command, capture_output=True, text=True)
+            with self.subTest(check="panel record"):
+                self.assertEqual(R.load_ssh().get(username), account)
+            with self.subTest(check="CLI result"):
+                self.assertEqual(rc, 1, output.getvalue().strip())
+                self.assertIn(error, json.loads(output.getvalue())["error"])
+            with self.subTest(check="UDP Custom sync"):
+                sync.assert_not_called()
+
+    def test_syncs_removal_only_after_linux_user_is_gone(self):
+        for returncode in (0, 6):
+            with self.subTest(userdel_exit=returncode), \
+                 tempfile.TemporaryDirectory() as base, \
+                 patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+                username = "departing-user"
+                account = R.ssh_add(username, "password", 30, 10, 1)
+
+                def userdel(command, **kwargs):
+                    self.assertEqual(R.load_ssh()[username], account)
+                    return subprocess.CompletedProcess(command, returncode, "", "")
+
+                def sync_udp():
+                    self.assertNotIn(username, R.load_ssh())
+
+                with patch.object(R.subprocess, "run", side_effect=userdel), \
+                     patch.object(R, "sync_udp_custom", side_effect=sync_udp) as sync:
+                    R.ssh_del(username)
+
+                sync.assert_called_once_with()
+                self.assertNotIn(username, R.load_ssh())
+
+    def test_userdel_launch_error_leaves_record(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+            R.ssh_add("alice", "password", 30, 0, 0)
+            with patch.object(R.subprocess, "run", side_effect=FileNotFoundError("userdel")), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(R.main(["ssh-del", "alice"]), 1)
+            self.assertIn("Could not run userdel", json.loads(output.getvalue())["error"])
+            self.assertIn("alice", R.load_ssh())
+
+    def test_partial_linux_deletion_removes_panel_record_with_warning(self):
+        username = "partial-user"
+        command = ["userdel", "-r", "--", username]
+        error = "userdel: cannot remove home directory"
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+            R.ssh_add(username, "password", 30, 0, 0)
+            with patch.object(R.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    command, 12, "", error)), \
+                 patch.object(R.pwd, "getpwnam", side_effect=KeyError(username)), \
+                 patch.object(R, "sync_udp_custom") as sync, \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                rc = R.main(["ssh-del", username])
+
+            self.assertEqual(rc, 0, output.getvalue().strip())
+            self.assertIn(f"Warning: userdel exited with status 12: {error}", output.getvalue())
+            self.assertNotIn(username, R.load_ssh())
+            sync.assert_called_once_with()
+
+    def test_unmanaged_linux_user_is_not_touched(self):
+        with patch.object(R.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "not found"):
+                R.ssh_del("not-in-panel")
+        run.assert_not_called()
+
+
 class TestConcurrentWrites(unittest.TestCase):
     def test_lock_reentrant_and_released_on_error(self):
         with self.assertRaises(ValueError):
