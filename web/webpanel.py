@@ -1890,7 +1890,9 @@ def page_edit(kind, user, csrf, flash=""):
 <label>New password (leave empty to keep the current one)</label>
 <div class="pw-group"><input name="password" type="text" autocomplete="off">
 <button class="btn sm grey" type="button" onclick="genPass(this)">Generate</button></div>"""
-    enabled = "yes" if u.get("enabled", True) else "no"
+    automatic = ('<option value="auto" selected>Checker locked — unlock when within limits</option>'
+                 if u.get("checker_lock") else "")
+    enabled = "auto" if automatic else ("yes" if u.get("enabled", True) else "no")
     sel_yes = "selected" if enabled == "yes" else ""
     sel_no = "selected" if enabled == "no" else ""
     body = f"""<div class="card editform">
@@ -1905,6 +1907,7 @@ def page_edit(kind, user, csrf, flash=""):
 {quota}{password}
 <label>Enabled</label>
 <select name="enabled">
+{automatic}
 <option value="yes" {sel_yes}>Yes</option>
 <option value="no" {sel_no}>No</option>
 </select>
@@ -2224,7 +2227,8 @@ def do_edit(kind, form):
         return "Error: Missing username."
     try:
         days = int(form.get("days", 0))
-        enable = form.get("enabled", "yes") == "yes"
+        status = form.get("enabled", "auto")
+        enable = None if status == "auto" else status == "yes"
         password = form.get("password", "")
         if kind == "ssh":
             kw = {"enable": enable}

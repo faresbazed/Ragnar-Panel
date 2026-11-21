@@ -280,6 +280,7 @@ def main():
             subprocess.run(["usermod", "-L", user], capture_output=True)
             subprocess.run(["pkill", "-u", user], capture_output=True)
             ssh[user]["enabled"] = False
+            ssh[user]["checker_lock"] = item["reason"]
             ssh_dirty = True
         elif item["kind"] == "ssh" and item["action"] == "kick-extra":
             ips = list(dict.fromkeys(live.get(("ssh", user), [])))
@@ -291,9 +292,11 @@ def main():
                     pass
         elif item["kind"] == "xray" and item["action"] == "remove":
             xr[user]["enabled"] = False
+            xr[user]["checker_lock"] = item["reason"]
             xray_dirty = True
         elif item["kind"] == "zivpn" and item["action"] == "remove":
             zivpn[user]["enabled"] = False
+            zivpn[user]["checker_lock"] = item["reason"]
             zivpn_dirty = True
     if ssh_dirty:
         ragnar.save_ssh(ssh)

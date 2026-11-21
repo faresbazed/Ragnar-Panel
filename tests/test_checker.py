@@ -1,7 +1,7 @@
-import os
-import sys
 import contextlib
 import io
+import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -81,6 +81,20 @@ class TestZivpnExpiry(unittest.TestCase):
         self.assertIn("expired-password", C.ragnar._read_json(self.config, {})["auth"]["config"])
         self.commands.assert_not_called()
 
+    def test_renewal_restores_only_checker_disabled_zivpn_password(self):
+        self.seed()
+        with patch.object(sys, "argv", ["checker", "--apply"]):
+            self.assertEqual(C.main(), 0)
+        for name in ("expired", "disabled"):
+            self.assertFalse(C.ragnar.load_zivpn()[name]["enabled"])
+            self.assertEqual(C.ragnar.main(
+                ["zivpn-edit", name, "--days", "30", "--extend"]), 0)
+        users = C.ragnar.load_zivpn()
+        self.assertTrue(users["expired"]["enabled"])
+        self.assertFalse(users["disabled"]["enabled"])
+        self.assertEqual(C.ragnar._read_json(self.config, {})["auth"]["config"],
+                         ["active-password", "expired-password", "today-password"])
+
     def test_empty_users_do_not_restart(self):
         with patch.object(sys, "argv", ["checker", "--apply"]):
             C.main()
@@ -147,6 +161,75 @@ class TestSocketAccounting(unittest.TestCase):
         # Kicking channel's extra IPs keeping {"1.2.3.4"} must ONLY return [56]
         # — never haproxy (pid 9), root (pid 999), or fares (pid 1234).
         self.assertEqual(C.pids_to_kick(sample, "channel", {"1.2.3.4"}), [56])
+
+
+class TestCheckerLocks(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(fixture.cleanup)
+        self.ragnar = C.ragnar
+        paths = {key: os.path.join(fixture.name, key)
+                 for key in ("SSH_DB", "XRAY_DB", "ZIVPN_DB", "XRAY_LAST_SEEN")}
+        overrides = patch.multiple(self.ragnar, BASE=fixture.name, **paths)
+        overrides.start()
+        self.addCleanup(overrides.stop)
+
+    def apply_checker(self):
+        with patch.object(sys, "argv", ["checker.py", "--apply"]), \
+             patch.object(C, "run", return_value=""), \
+             patch.object(C.subprocess, "run"), \
+             patch.object(self.ragnar, "apply_configs"), \
+             patch.object(self.ragnar, "sync_udp_custom"), \
+             contextlib.redirect_stdout(io.StringIO()) as log:
+            self.assertEqual(C.main(), 0)
+        return log.getvalue()
+
+    def ssh_edit(self, user, *args):
+        with patch.object(self.ragnar.subprocess, "run") as run, \
+             patch.object(self.ragnar, "sync_udp_custom"), \
+             patch.object(self.ragnar, "fmt_ssh_info", return_value=""), \
+             contextlib.redirect_stdout(io.StringIO()):
+            run.return_value.returncode = 0
+            self.assertEqual(self.ragnar.main(["ssh-edit", user, *args]), 0)
+        return [call.args[0] for call in run.call_args_list]
+
+    def test_ssh_cli_renewal_unlocks_only_checker_disabled_accounts(self):
+        for user in ("ragnar-test-expired", "ragnar-test-admin", "ragnar-test-override"):
+            self.ragnar.ssh_add(user, "testpw", -1, 0, 0)
+        self.ssh_edit("ragnar-test-admin", "--disable")
+        log = self.apply_checker()
+        self.assertIn("ssh/ragnar-test-expired: lock (expired)", log)
+        self.assertIn("ssh/ragnar-test-override: lock (expired)", log)
+        self.assertNotIn("ragnar-test-admin", log)
+        self.ssh_edit("ragnar-test-override", "--disable")
+
+        for user, enabled in (("ragnar-test-expired", True),
+                              ("ragnar-test-admin", False),
+                              ("ragnar-test-override", False)):
+            with self.subTest(user=user):
+                self.assertFalse(self.ragnar.load_ssh()[user]["enabled"])
+                commands = self.ssh_edit(user, "--days", "30", "--extend")
+                record = self.ragnar.load_ssh()[user]
+                self.assertEqual(record["expiry"], self.ragnar.expiry_from_days(30))
+                self.assertEqual(record["enabled"], enabled)
+                self.assertIn(["usermod", "-U" if enabled else "-L", user], commands)
+
+    def test_ssh_checker_lock_only_clears_after_both_limits_are_fixed(self):
+        self.ragnar.ssh_add("ragnar-test-over", "testpw", -1, 1, 0)
+        users = self.ragnar.load_ssh()
+        users["ragnar-test-over"]["used_bytes"] = 2 * 1024 ** 3
+        self.ragnar.save_ssh(users)
+        self.assertIn("ssh/ragnar-test-over: lock (expired)", self.apply_checker())
+
+        self.ssh_edit("ragnar-test-over", "--days", "30", "--extend")
+        self.assertFalse(self.ragnar.load_ssh()["ragnar-test-over"]["enabled"])
+        self.ssh_edit("ragnar-test-over", "--quota-gb", "2")
+        self.assertFalse(self.ragnar.load_ssh()["ragnar-test-over"]["enabled"])
+        commands = self.ssh_edit("ragnar-test-over", "--quota-gb", "0")
+        record = self.ragnar.load_ssh()["ragnar-test-over"]
+        self.assertTrue(record["enabled"])
+        self.assertEqual(record["used_bytes"], 2 * 1024 ** 3)
+        self.assertIn(["usermod", "-U", "ragnar-test-over"], commands)
 
 
 if __name__ == "__main__":
