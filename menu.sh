@@ -633,7 +633,10 @@ PY
                pause ;;
             4) echo "Starting quick tunnel - the https hostname appears in the log."
                echo "Point it at http://127.0.0.1:80 (the HAProxy front door)."
-               timeout 10 cloudflared tunnel --url http://127.0.0.1:80 2>&1 | head -30
+               echo "Press Ctrl+C to stop the quick tunnel and return to the menu."
+               trap ':' INT
+               cloudflared tunnel --url http://127.0.0.1:80 2>&1
+               trap - INT
                pause ;;
             0) return ;;
             *) invalid_choice ;;
