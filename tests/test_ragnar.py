@@ -329,6 +329,7 @@ class TestSSHDeletion(unittest.TestCase):
             account = R.ssh_add(username, "password", 30, 10, 1)
             with patch.object(R.subprocess, "run", return_value=subprocess.CompletedProcess(
                     command, 8, "", error + "\n")) as run, \
+                 patch.object(R.pwd, "getpwnam"), \
                  patch.object(R, "sync_udp_custom") as sync, \
                  contextlib.redirect_stdout(io.StringIO()) as output:
                 rc = R.main(["ssh-del", username])
@@ -373,6 +374,25 @@ class TestSSHDeletion(unittest.TestCase):
                 self.assertEqual(R.main(["ssh-del", "alice"]), 1)
             self.assertIn("Could not run userdel", json.loads(output.getvalue())["error"])
             self.assertIn("alice", R.load_ssh())
+
+    def test_partial_linux_deletion_removes_panel_record_with_warning(self):
+        username = "partial-user"
+        command = ["userdel", "-r", "--", username]
+        error = "userdel: cannot remove home directory"
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")):
+            R.ssh_add(username, "password", 30, 0, 0)
+            with patch.object(R.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    command, 12, "", error)), \
+                 patch.object(R.pwd, "getpwnam", side_effect=KeyError(username)), \
+                 patch.object(R, "sync_udp_custom") as sync, \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                rc = R.main(["ssh-del", username])
+
+            self.assertEqual(rc, 0, output.getvalue().strip())
+            self.assertIn(f"Warning: userdel exited with status 12: {error}", output.getvalue())
+            self.assertNotIn(username, R.load_ssh())
+            sync.assert_called_once_with()
 
     def test_unmanaged_linux_user_is_not_touched(self):
         with patch.object(R.subprocess, "run") as run:

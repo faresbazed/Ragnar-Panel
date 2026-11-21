@@ -208,7 +208,7 @@ import ragnar, webpanel
 
 ragnar.ssh_add('busy-web-user', 'password', 30, 0, 0)
 error = 'userdel: user busy-web-user is currently used by process 4242'
-with patch.object(ragnar.subprocess, 'run',
+with patch.object(ragnar.pwd, 'getpwnam'), patch.object(ragnar.subprocess, 'run',
                   return_value=subprocess.CompletedProcess([], 8, '', error)):
     msg = webpanel.do_user_action('ssh', {'op': 'delete', 'user': 'busy-web-user'})
 assert msg.startswith('Error:') and error in msg, msg
