@@ -195,6 +195,7 @@ def ensure_iptables_rules(ssh):
             run(f"iptables -A OUTPUT -m owner --uid-owner {uid} -j RETURN")
 
 
+@ragnar.account_transaction
 def accumulate_usage(ss_text=None):
     if ss_text is None:
         ss_text = run("ss -tnpi state established 2>/dev/null")
@@ -264,47 +265,51 @@ def accumulate_usage(ss_text=None):
 def main():
     apply_mode = "--apply" in sys.argv
     ss_text = run("ss -tnpi state established 2>/dev/null")
-    ssh, xr = accumulate_usage(ss_text)
+    accumulate_usage(ss_text)
     live = ssh_live_ips(ss_text)
-    zivpn = ragnar.load_zivpn()
-    plan = ragnar.enforcement_plan(ssh, xr, live, zivpn)
-    ssh_dirty = False
-    xray_dirty = False
-    zivpn_dirty = False
-    for item in plan:
-        print(f"{item['kind']}/{item['user']}: {item['action']} ({item['reason']})")
-        if not apply_mode:
-            continue
-        user = item["user"]
-        if item["kind"] == "ssh" and item["action"] == "lock":
-            subprocess.run(["usermod", "-L", user], capture_output=True)
-            subprocess.run(["pkill", "-u", user], capture_output=True)
-            ssh[user]["enabled"] = False
-            ssh[user]["checker_lock"] = item["reason"]
-            ssh_dirty = True
-        elif item["kind"] == "ssh" and item["action"] == "kick-extra":
-            ips = list(dict.fromkeys(live.get(("ssh", user), [])))
-            keep = set(ips[: int(ssh[user].get("ip_limit", 0))])
-            for pid in pids_to_kick(ss_text, user, keep):
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except OSError:
-                    pass
-        elif item["kind"] == "xray" and item["action"] == "remove":
-            xr[user]["enabled"] = False
-            xr[user]["checker_lock"] = item["reason"]
-            xray_dirty = True
-        elif item["kind"] == "zivpn" and item["action"] == "remove":
-            zivpn[user]["enabled"] = False
-            zivpn[user]["checker_lock"] = item["reason"]
-            zivpn_dirty = True
+    with ragnar.account_lock():
+        ssh = ragnar.load_ssh()
+        xr = ragnar.load_xray()
+        zivpn = ragnar.load_zivpn()
+        plan = ragnar.enforcement_plan(ssh, xr, live, zivpn)
+        ssh_dirty = False
+        xray_dirty = False
+        zivpn_dirty = False
+        for item in plan:
+            print(f"{item['kind']}/{item['user']}: {item['action']} ({item['reason']})")
+            if not apply_mode:
+                continue
+            user = item["user"]
+            if item["kind"] == "ssh" and item["action"] == "lock":
+                subprocess.run(["usermod", "-L", user], capture_output=True)
+                subprocess.run(["pkill", "-u", user], capture_output=True)
+                ssh[user]["enabled"] = False
+                ssh[user]["checker_lock"] = item["reason"]
+                ssh_dirty = True
+            elif item["kind"] == "ssh" and item["action"] == "kick-extra":
+                ips = list(dict.fromkeys(live.get(("ssh", user), [])))
+                keep = set(ips[: int(ssh[user].get("ip_limit", 0))])
+                for pid in pids_to_kick(ss_text, user, keep):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except OSError:
+                        pass
+            elif item["kind"] == "xray" and item["action"] == "remove":
+                xr[user]["enabled"] = False
+                xr[user]["checker_lock"] = item["reason"]
+                xray_dirty = True
+            elif item["kind"] == "zivpn" and item["action"] == "remove":
+                zivpn[user]["enabled"] = False
+                zivpn[user]["checker_lock"] = item["reason"]
+                zivpn_dirty = True
+        if ssh_dirty:
+            ragnar.save_ssh(ssh)
+        if xray_dirty:
+            ragnar.save_xray(xr)
+        if zivpn_dirty:
+            ragnar._write_json(ragnar.ZIVPN_DB, {"users": zivpn})
     if ssh_dirty:
-        ragnar.save_ssh(ssh)
         ragnar.sync_udp_custom()
-    if xray_dirty:
-        ragnar.save_xray(xr)
-    if zivpn_dirty:
-        ragnar._write_json(ragnar.ZIVPN_DB, {"users": zivpn})
     if xray_dirty or zivpn_dirty:
         ragnar.apply_configs()
     if not plan:
