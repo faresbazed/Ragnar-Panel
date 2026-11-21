@@ -2167,10 +2167,9 @@ def do_user_action(kind, form):
         if op == "create":
             days = int(form.get("days", 30))
             if kind == "ssh":
-                u = ragnar.ssh_add(user, form.get("password", ""), days,
+                ragnar.ssh_create(user, form.get("password", ""), days,
                                    float(form.get("quota", 0)),
                                    int(form.get("iplimit", 0)))
-                ragnar.sync_linux_user(user, u["password"], u["expiry"], True)
             elif kind == "xray":
                 ragnar.xray_add(user, days, float(form.get("quota", 0)),
                                 int(form.get("iplimit", 0)),

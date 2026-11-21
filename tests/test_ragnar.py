@@ -319,6 +319,85 @@ class TestBorderedTables(unittest.TestCase):
         self.assertEqual(R._fmt_bytes_short(int(1.13 * 1024 ** 3)), "1.13G")
 
 
+class TestSSHCreation(unittest.TestCase):
+    def test_success_and_duplicate(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')), \
+             patch.object(R, 'sync_udp_custom') as sync:
+            def run(args, **kwargs):
+                return subprocess.CompletedProcess(args, int(args[0] == 'id'), '', '')
+
+            with patch.object(R.subprocess, 'run', side_effect=run):
+                rec = R.ssh_create('new-user', 'password', 30, 0, 0)
+                self.assertEqual(R.load_ssh()['new-user'], rec)
+                sync.assert_called_once_with()
+                with self.assertRaises(ValueError):
+                    R.ssh_create('new-user', 'other', 30, 0, 0)
+                with self.assertRaises(ValueError):
+                    R.ssh_create('', 'password', 30, 0, 0)
+                self.assertEqual(R.load_ssh(), {'new-user': rec})
+
+    def test_oserror_and_failed_rollback_are_visible(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as base, \
+                 patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')), \
+                 patch.object(R, 'sync_udp_custom') as sync:
+                calls = []
+
+                def run(args, **kwargs):
+                    calls.append(args[0])
+                    if args[0] == 'chpasswd':
+                        raise OSError('cannot execute')
+                    rc = int(not existing) if args[0] == 'id' else 0
+                    if args[0] == 'userdel':
+                        rc = 8
+                    return subprocess.CompletedProcess(args, rc, '', '')
+
+                with patch.object(R.subprocess, 'run', side_effect=run):
+                    with self.assertRaisesRegex(R.SSHSyncError, 'Could not run chpasswd') as error:
+                        R.ssh_create('failed-user', 'password', 30, 0, 0)
+                self.assertEqual('rollback failed' in str(error.exception), not existing)
+                self.assertEqual('userdel' in calls, not existing)
+                self.assertEqual(R.load_ssh(), {})
+                sync.assert_not_called()
+
+    def test_host_command_failures_roll_back_creation(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'web'))
+        import webpanel
+        for command in ('useradd', 'chpasswd', 'chage', 'usermod'):
+            for frontend in ('web', 'cli'):
+                with self.subTest(command=command, frontend=frontend), \
+                     tempfile.TemporaryDirectory() as base, \
+                     patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')), \
+                     patch.object(webpanel, 'ragnar', R):
+                    calls = []
+
+                    def run(args, **kwargs):
+                        calls.append(args[0])
+                        rc = 1 if args[0] in ('id', command) else 0
+                        return subprocess.CompletedProcess(args, rc, '', 'host failure')
+
+                    with patch.object(R.subprocess, 'run', side_effect=run), \
+                         patch.object(R, 'sync_udp_custom') as sync, \
+                         contextlib.redirect_stdout(io.StringIO()) as output:
+                        if frontend == 'web':
+                            message = webpanel.do_user_action('ssh', {
+                                'op': 'create', 'user': 'failed-user',
+                                'password': 'password', 'days': '30'})
+                            self.assertIn('Error:', message)
+                        else:
+                            self.assertEqual(R.main(['ssh-add', 'failed-user',
+                                                     'password', '30', '0', '0']), 1)
+                            message = output.getvalue()
+                    self.assertIn(command, message)
+                    self.assertNotIn('created', message)
+                    self.assertNotIn('failed-user', R.load_ssh())
+                    self.assertNotIn('failed-user:password',
+                                     R.gen_udp_custom_config()['auth']['config'])
+                    sync.assert_not_called()
+                    self.assertIn('userdel', calls)
+
+
 class TestSSHDeletion(unittest.TestCase):
     def test_busy_linux_user_keeps_panel_record(self):
         username = "active-user"
