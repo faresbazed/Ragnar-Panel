@@ -614,8 +614,8 @@ cloudflared_menu() {
         menu_choice "Select an option:" || return
         c=$MENU_CHOICE
         case $c in
-            1) read -rp "Domain: " v; echo "$v" > "$RAGNAR_DIR/domain"
-               python3 "$CORE" gen-configs; echo "saved"; pause ;;
+            1) read -rp "Domain: " v
+               python3 "$CORE" set-domain "$v" && echo "saved"; pause ;;
             2) read -rp "CF hostname: " v
                python3 - "$v" <<'PY'
 import json,sys,os

@@ -125,6 +125,15 @@ def load_settings():
     }
 
 
+def set_domain(domain):
+    settings = _read_json(SETTINGS, {})
+    settings["domain"] = domain
+    _write_json(SETTINGS, settings)
+    with open(os.path.join(BASE, "domain"), "w", encoding="utf-8") as fh:
+        fh.write(domain + "\n")
+    apply_configs()
+
+
 def b64e(raw: bytes) -> str:
     return base64.b64encode(raw).decode().strip()
 
@@ -1232,6 +1241,8 @@ def main(argv):
             print(bandwidth_summary())
         elif cmd == "dashboard-json":
             _p(dashboard_summary())
+        elif cmd == "set-domain":
+            set_domain(args[0]); _p({"ok": True})
         elif cmd == "gen-configs":
             apply_configs(force_restart=True); _p({"ok": True})
         elif cmd == "stats":
