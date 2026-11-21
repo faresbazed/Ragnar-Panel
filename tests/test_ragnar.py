@@ -128,6 +128,28 @@ ragnar.zivpn_del("expired")
 ragnar.zivpn_add("carol", "zpass", 15)
 zcfg = ragnar.gen_zivpn_config()
 check("zivpn config", zcfg["listen"] == ":5667" and "zpass" in zcfg["auth"]["config"])
+ragnar.zivpn_add("dave", "dpass", 15)
+check("zivpn edit rejects a password another account already uses",
+      _raises(lambda: ragnar.zivpn_edit("dave", password="zpass"))
+      and ragnar.load_zivpn()["dave"]["password"] == "dpass")
+check("zivpn add rejects a password another account already uses",
+      _raises(lambda: ragnar.zivpn_add("erin", "zpass", 15))
+      and "erin" not in ragnar.load_zivpn())
+ragnar.zivpn_edit("dave", password="dpass")
+ragnar.zivpn_edit("carol", enable=False)
+check("zivpn disabling an account stops its password being accepted",
+      "zpass" not in ragnar.gen_zivpn_config()["auth"]["config"])
+ragnar.zivpn_edit("carol", enable=True)
+for _name in set(ragnar.load_zivpn()) - {"carol"}:
+    ragnar.zivpn_del(_name)
+_zdb = ragnar._read_json(ragnar.ZIVPN_DB, {"users": {}})
+_zdb["users"]["legacy-twin"] = dict(_zdb["users"]["carol"], enabled=False)
+ragnar._write_json(ragnar.ZIVPN_DB, _zdb)
+check("zivpn existing shared password is revoked when either account is disabled",
+      "zpass" not in ragnar.gen_zivpn_config()["auth"]["config"])
+ragnar.zivpn_del("legacy-twin")
+check("zivpn password accepted again once the inactive duplicate is gone",
+      "zpass" in ragnar.gen_zivpn_config()["auth"]["config"])
 
 # Enforcement logic ------------------------------------------------------
 check("quota logic", ragnar.quota_exceeded(60 * 1024**3, 50)
