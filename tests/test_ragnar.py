@@ -107,6 +107,20 @@ check("links: paths", "/ragnar-vless" in flat
       and "/ragnar-trojan" in flat and "/ragnar-ssws" in flat)
 
 # ZIVPN ----------------------------------------------------------------
+fallback = ragnar.gen_zivpn_config()["auth"]["config"]
+check("zivpn empty users never use public fallback",
+      "ragnar-default-change-me" not in fallback)
+check("zivpn fallback is non-empty and stable",
+      len(fallback) == 1 and bool(fallback[0])
+      and fallback == ragnar.gen_zivpn_config()["auth"]["config"])
+check("zivpn fallback persisted in settings",
+      ragnar._read_json(ragnar.SETTINGS, {}).get("zivpn_fallback_password") == fallback[0])
+ragnar.zivpn_add("expired", "expired-password", -1)
+check("zivpn expired-only users use stable private fallback",
+      ragnar.gen_zivpn_config()["auth"]["config"] == fallback
+      and "ragnar-default-change-me" not in fallback
+      and "expired-password" not in fallback)
+ragnar.zivpn_del("expired")
 ragnar.zivpn_add("carol", "zpass", 15)
 zcfg = ragnar.gen_zivpn_config()
 check("zivpn config", zcfg["listen"] == ":5667" and "zpass" in zcfg["auth"]["config"])
