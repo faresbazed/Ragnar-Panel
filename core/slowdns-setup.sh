@@ -254,6 +254,17 @@ fi
 #    may belong to the sister panel); add tagged rules only when missing.
 # ---------------------------------------------------------------------
 FW_COMMENT=ragnar-slowdns
+MAIN_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')
+for fw in iptables ip6tables; do
+    command -v "$fw" >/dev/null 2>&1 || continue
+    for ports in '5300 53' '53 5300'; do
+        read -r from to <<< "$ports"
+        while "$fw" -t nat -D PREROUTING -p udp --dport "$from" -j REDIRECT --to-ports "$to" 2>/dev/null; do :; done
+        if [ -n "$MAIN_IFACE" ]; then
+            while "$fw" -t nat -D PREROUTING -i "$MAIN_IFACE" -p udp --dport "$from" -j REDIRECT --to-ports "$to" 2>/dev/null; do :; done
+        fi
+    done
+done
 for port in 53 5300; do
     if ! iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null && \
        ! iptables -C INPUT -p udp --dport "$port" -m comment --comment "$FW_COMMENT" -j ACCEPT 2>/dev/null; then
@@ -305,6 +316,29 @@ systemctl disable masterdnsvpn 2>/dev/null || true
 # /sbin/iptables simply does not exist and systemd silently skips the
 # ExecStartPre lines). Resolve it here instead of hardcoding one distro.
 IPTABLES_BIN=$(command -v iptables || echo /usr/sbin/iptables)
+IP6TABLES_BIN=$(command -v ip6tables || true)
+firewall_prestart() {
+    local fw loopback port rule
+    for fw in "$IPTABLES_BIN" "$IP6TABLES_BIN"; do
+        [ -n "$fw" ] || continue
+        loopback=127.0.0.0/8
+        [ "$fw" = "$IP6TABLES_BIN" ] && loopback=::1/128
+        # Escape systemd specifiers and environment expansion in executable paths.
+        fw=${fw//%/%%}
+        fw=${fw//\$/\$\$}
+        for port in 53 5300 redirect; do
+            if [ "$port" = redirect ]; then
+                rule="-t nat %s PREROUTING ! -d $loopback -p udp --dport 53 %s -j REDIRECT --to-ports 5300"
+            else
+                rule="%s INPUT -p udp --dport $port %s -j ACCEPT"
+            fi
+            printf 'ExecStartPre=-/bin/sh -c "\x27%s\x27 %s || \x27%s\x27 %s || \x27%s\x27 %s"\n' \
+                "$fw" "$(printf -- "$rule" -C '')" \
+                "$fw" "$(printf -- "$rule" -C '-m comment --comment ragnar-slowdns')" \
+                "$fw" "$(printf -- "$rule" -I '-m comment --comment ragnar-slowdns')"
+        done
+    done
+}
 cat > /etc/systemd/system/slowdns.service <<EOF
 [Unit]
 Description=Ragnar Turbo SlowDNS (DNSTT) Server (UDP 53 -> 5300 -> 127.0.0.1:${TARGET}, MTU ${MTU})
@@ -314,9 +348,7 @@ After=network.target ssh.service dropbear.service
 Type=simple
 Nice=-15
 LimitNOFILE=1000000
-ExecStartPre=-${IPTABLES_BIN} -C INPUT -p udp --dport 53 -m comment --comment ragnar-slowdns -j ACCEPT
-ExecStartPre=-${IPTABLES_BIN} -C INPUT -p udp --dport 5300 -m comment --comment ragnar-slowdns -j ACCEPT
-ExecStartPre=-${IPTABLES_BIN} -t nat -C PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 -m comment --comment ragnar-slowdns -j REDIRECT --to-ports 5300
+$(firewall_prestart)
 ExecStart=$BIN -udp :5300 -mtu ${MTU} -privkey-file $SD_DIR/server.key ${NS} 127.0.0.1:${TARGET}
 Restart=always
 RestartSec=2
