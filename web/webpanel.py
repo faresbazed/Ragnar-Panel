@@ -1652,7 +1652,7 @@ def user_table(rows, kind, csrf):
             f'<button class="btn sm grey" name="op" value="renew30" title="Extend 30 days">+30d</button>'
             f'<button class="btn sm grey" name="op" value="{toggle}">{toggle}</button>'
             f'<button class="btn sm red" name="op" value="delete" '
-            f'onclick="return confirm(\'Delete {esc(name)}?\')">delete</button>'
+            f'onclick="return confirm({esc(json.dumps(f"Delete {name}?"))})">delete</button>'
             f"</form></div></td></tr>"
         )
     empty_row = '<tr><td colspan="8" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
@@ -1848,7 +1848,7 @@ def page_users(kind, csrf, flash=""):
                 f'<button class="btn sm grey" name="op" value="renew30" title="Extend 30 days">+30d</button>'
                 f'<button class="btn sm grey" name="op" value="{toggle}">{toggle}</button>'
                 f'<button class="btn sm red" name="op" value="delete" '
-                f'onclick="return confirm(\'Delete {esc(n)}?\')">delete</button>'
+                f'onclick="return confirm({esc(json.dumps(f"Delete {n}?"))})">delete</button>'
                 f"</form></div></td></tr>"
             )
         empty_row = '<tr><td colspan="5" class="empty-cell">No accounts provisioned yet. Use the composer above to create one.</td></tr>'
@@ -2168,11 +2168,11 @@ def do_user_action(kind, form):
             days = int(form.get("days", 30))
             if kind == "ssh":
                 u = ragnar.ssh_add(user, form.get("password", ""), days,
-                                   float(form.get("quota", 0)),
+                                   ragnar.parse_quota(form.get("quota", 0)),
                                    int(form.get("iplimit", 0)))
                 ragnar.sync_linux_user(user, u["password"], u["expiry"], True)
             elif kind == "xray":
-                ragnar.xray_add(user, days, float(form.get("quota", 0)),
+                ragnar.xray_add(user, days, ragnar.parse_quota(form.get("quota", 0)),
                                 int(form.get("iplimit", 0)),
                                 form.get("uuid", ""))
                 ragnar.apply_configs()
@@ -2236,7 +2236,7 @@ def do_edit(kind, form):
             if days > 0:
                 kw.update(days=days, extend=True)
             if "quota" in form:
-                kw["quota_gb"] = float(form["quota"])
+                kw["quota_gb"] = ragnar.parse_quota(form["quota"])
             if "iplimit" in form:
                 kw["ip_limit"] = int(form["iplimit"])
             if password:
@@ -2249,7 +2249,7 @@ def do_edit(kind, form):
             if days > 0:
                 kw.update(days=days, extend=True)
             if "quota" in form:
-                kw["quota_gb"] = float(form["quota"])
+                kw["quota_gb"] = ragnar.parse_quota(form["quota"])
             if "iplimit" in form:
                 kw["ip_limit"] = int(form["iplimit"])
             ragnar.xray_edit(user, **kw)
