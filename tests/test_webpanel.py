@@ -38,12 +38,12 @@ import ragnar
 ragnar.ssh_add('webuser', 'pw123456', 30, 0, 0)
 ragnar.xray_add('xuser', 30, 0, 0)
 ragnar.zivpn_add('zuser', 'zpw12345', 30)
-for name in ('sales&support', 'sales#support', 'sales+support', 'sales support', 'sales"<support>'):
+for i, name in enumerate(('sales&support', 'sales#support', 'sales+support', 'sales support', 'sales"<support>')):
     ragnar.xray_add(name, 30, 0, 0)
-    ragnar.zivpn_add(name, 'zpw12345', 30)
-for name in ("O'Brien", "x');alert(1);//", 'quotes"<&>\\\\end'):
+    ragnar.zivpn_add(name, f'zpw-sales-{i}', 30)
+for i, name in enumerate(("O'Brien", "x');alert(1);//", 'quotes"<&>\\\\end')):
     ragnar.xray_add(name, 30, 0, 0)
-    ragnar.zivpn_add(name, 'zpw12345', 30)
+    ragnar.zivpn_add(name, f'zpw-quote-{i}', 30)
 """], cwd=ROOT, env=env, capture_output=True, text=True)
         assert seed.returncode == 0, seed.stderr
         subprocess.run([sys.executable, os.path.join(ROOT, "web", "webpanel.py"),
