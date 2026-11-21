@@ -218,9 +218,13 @@ json.dump(s, open(p, "w"), indent=2)
 PY
 
 # ---------------------------------------------------------------------
-# Certificates (preserve existing certs on update; issue on fresh install)
+# Certificates (refresh from Let's Encrypt before preserving local certs)
 # ---------------------------------------------------------------------
-if [ "$IS_UPDATE" = 1 ] && [ -s "$BASE/certs/fullchain.pem" ] && [ -s "$BASE/certs/privkey.pem" ]; then
+if [ -n "$DOMAIN" ] && [ -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
+        [ -s "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ] && \
+        openssl x509 -in "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" -noout -checkend 0 >/dev/null 2>&1; then
+    bash "$SRC/core/cert-deploy.sh" "/etc/letsencrypt/live/$DOMAIN" || die "Cannot deploy Let's Encrypt certificate"
+elif [ "$IS_UPDATE" = 1 ] && [ -s "$BASE/certs/fullchain.pem" ] && [ -s "$BASE/certs/privkey.pem" ]; then
     log "Preserving existing TLS certificates"
 else
     CERT_OK=0
@@ -244,8 +248,7 @@ else
                 tail -n 8 /tmp/ragnar-certbot.log 2>/dev/null | sed 's/^/    /'
             fi
             if [ "$CERT_OK" = 1 ]; then
-                cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$BASE/certs/fullchain.pem"
-                cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem"   "$BASE/certs/privkey.pem"
+                bash "$SRC/core/cert-deploy.sh" "/etc/letsencrypt/live/$DOMAIN" || die "Cannot deploy Let's Encrypt certificate"
             fi
         fi
     fi
@@ -259,6 +262,9 @@ else
 fi
 cat "$BASE/certs/fullchain.pem" "$BASE/certs/privkey.pem" > "$BASE/certs/haproxy.pem"
 chmod 600 "$BASE/certs/"*.pem "$BASE/certs/haproxy.pem"
+mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+ragnar_backup_file /etc/letsencrypt/renewal-hooks/deploy/ragnar-cert-deploy || die "Cannot preserve existing certificate hook"
+install -m 755 "$SRC/core/cert-deploy.sh" /etc/letsencrypt/renewal-hooks/deploy/ragnar-cert-deploy
 # ZIVPN certificate (its own format/names)
 if [ ! -s "$BASE/certs/zivpn.crt" ] || [ ! -s "$BASE/certs/zivpn.key" ]; then
     openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/zivpn.key" \
