@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import uuid as _uuid
+from urllib.parse import quote
 
 VERSION = "1.0.0"
 TG_USER = "@farisbazed"
@@ -175,6 +176,15 @@ def load_settings():
         "ns": s.get("ns", ""),                    # SlowDNS nameserver, e.g. ns.example.com
         "slowdns_pubkey": s.get("slowdns_pubkey", ""),
     }
+
+
+def set_domain(domain):
+    settings = _read_json(SETTINGS, {})
+    settings["domain"] = domain
+    _write_json(SETTINGS, settings)
+    with open(os.path.join(BASE, "domain"), "w", encoding="utf-8") as fh:
+        fh.write(domain + "\n")
+    apply_configs()
 
 
 def b64e(raw: bytes) -> str:
@@ -585,6 +595,7 @@ def links_for(name):
         raise ValueError(f"Xray user '{name}' not found")
     u = users[name]
     s = load_settings()
+    password = quote(u["password"], safe="")
     out = {}
     for label, addr, port, sec in _variants():
         tag = f"Ragnar-{name}"
@@ -596,7 +607,7 @@ def links_for(name):
                      "tls": "tls" if sec == "tls" else "", "sni": addr if sec == "tls" else "",
                      "alpn": "http/1.1" if sec == "tls" else "", "fp": "chrome"}
         vmess = "vmess://" + b64e(json.dumps(vmess_obj, separators=(",", ":")).encode())
-        trojan = (f"trojan://{u['password']}@{addr}:{port}?"
+        trojan = (f"trojan://{password}@{addr}:{port}?"
                   f"{_ws_params(addr, port, sec, PATHS['trojan'])}#{tag}-TROJAN")
         ss_plain = b64url_nopad(f"{SS_METHOD}:{_ss_server_key()}:{u['ss_password']}".encode())
         ssws = f"ss://{ss_plain}@{addr}:{port}?type=ws&path={PATHS['ssws']}&host={addr}"
@@ -611,12 +622,12 @@ def links_for(name):
     host = s["domain"] or s["host"]
     anytls_sni = f"anytls.{s['domain']}" if s["domain"] else host
     out["AnyTLS · port 443 (direct, SNI routed)"] = {
-        "ANYTLS": (f"anytls://{u['password']}@{host}:443?"
+        "ANYTLS": (f"anytls://{password}@{host}:443?"
                    f"security=tls&sni={anytls_sni}&fp=chrome&alpn=h2#Ragnar-{name}-ANYTLS"),
     }
     sni_host = anytls_sni
     out["AnyTLS · port 8446 (direct fallback)"] = {
-        "ANYTLS": (f"anytls://{u['password']}@{host}:8446?"
+        "ANYTLS": (f"anytls://{password}@{host}:8446?"
                    f"security=tls&sni={sni_host}&fp=chrome&alpn=h2#Ragnar-{name}-ANYTLS-8446"),
     }
     return out
@@ -1295,6 +1306,8 @@ def main(argv):
             print(bandwidth_summary())
         elif cmd == "dashboard-json":
             _p(dashboard_summary())
+        elif cmd == "set-domain":
+            set_domain(args[0]); _p({"ok": True})
         elif cmd == "gen-configs":
             apply_configs(force_restart=True); _p({"ok": True})
         elif cmd == "stats":
