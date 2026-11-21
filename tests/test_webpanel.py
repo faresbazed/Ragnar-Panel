@@ -5,6 +5,7 @@ scratch port and drives it with urllib: login flow, dashboard, user
 create/list over HTTP, and the Xray links page.
 """
 import html
+from html.parser import HTMLParser
 import http.cookiejar
 import json
 import os
@@ -38,6 +39,9 @@ ragnar.ssh_add('webuser', 'pw123456', 30, 0, 0)
 ragnar.xray_add('xuser', 30, 0, 0)
 ragnar.zivpn_add('zuser', 'zpw12345', 30)
 for name in ('sales&support', 'sales#support', 'sales+support', 'sales support', 'sales"<support>'):
+    ragnar.xray_add(name, 30, 0, 0)
+    ragnar.zivpn_add(name, 'zpw12345', 30)
+for name in ("O'Brien", "x');alert(1);//", 'quotes"<&>\\\\end'):
     ragnar.xray_add(name, 30, 0, 0)
     ragnar.zivpn_add(name, 'zpw12345', 30)
 """], cwd=ROOT, env=env, capture_output=True, text=True)
@@ -156,6 +160,32 @@ for name in ('sales&support', 'sales#support', 'sales+support', 'sales support',
         xray_page = op.open(BASE_URL + "/xray").read().decode()
         self.assertIn('name="uuid"', xray_page)
         self.assertIn("Auto-generated if blank", xray_page)
+
+    def test_delete_confirm_escaping(self):
+        class DeleteButtons(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.handlers = []
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'button' and attrs.get('value') == 'delete':
+                    self.handlers.append(attrs['onclick'])
+
+        op = self.opener()
+        self.login(op)
+        for kind in ('ssh', 'xray', 'zivpn'):
+            page = op.open(BASE_URL + '/' + kind).read().decode()
+            names = ('webuser',) if kind == 'ssh' else (
+                "O'Brien", "x');alert(1);//", 'quotes"<&>\\end')
+            for name in names:
+                with self.subTest(kind=kind, name=name):
+                    row = next(row for row in page.split('<tr ')
+                               if f'<b>{html.escape(name)}</b>' in row)
+                    parser = DeleteButtons()
+                    parser.feed('<tr ' + row)
+                    self.assertEqual(parser.handlers, [
+                        'return confirm(' + json.dumps('Delete ' + name + '?') + ')'])
 
     def test_reserved_account_links(self):
         op = self.opener()
