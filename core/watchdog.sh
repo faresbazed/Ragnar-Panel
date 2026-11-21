@@ -4,18 +4,16 @@
 # shared port down with it (HAProxy also health-checks and skips dead
 # backends in the meantime).
 SERVICES="haproxy xray sing-box ragnar-wsproxy ragnar-landing dropbear zivpn udp-custom badvpn-udpgw slowdns ragnar-web"
-# Fast path: single D-Bus call when every service is already active.
-if ! systemctl is-active --quiet $SERVICES 2>/dev/null; then
-    for svc in $SERVICES; do
-        if systemctl list-unit-files "$svc.service" >/dev/null 2>&1 \
-           && systemctl is-enabled --quiet "$svc" 2>/dev/null \
-           && ! systemctl is-active --quiet "$svc"; then
-            systemctl restart "$svc" \
-                && logger -t ragnar-watchdog "restarted $svc" \
-                || logger -t ragnar-watchdog "FAILED to restart $svc"
+for svc in $SERVICES; do
+    if ! systemctl is-active --quiet "$svc" 2>/dev/null \
+       && systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+        if systemctl restart "$svc"; then
+            logger -t ragnar-watchdog "restarted $svc"
+        else
+            logger -t ragnar-watchdog "FAILED to restart $svc"
         fi
-    done
-fi
+    fi
+done
 # HAProxy must own 80/443 - if something else grabbed them, bounce HAProxy.
 if ! ss -tlnp 2>/dev/null | grep -qE ':(80|443)\s.*haproxy'; then
     if systemctl is-enabled --quiet haproxy 2>/dev/null; then
