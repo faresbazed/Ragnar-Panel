@@ -232,15 +232,18 @@ if [ -f "$BASE/db/ssh.json" ]; then
         # userdel refuses accounts with live sessions, so end them first.
         python3 -c "import json;print('\n'.join(json.load(open('$BASE/db/ssh.json'))['users']))" \
             | while IFS= read -r u; do
-                [ -n "$u" ] && id -u -- "$u" >/dev/null 2>&1 || continue
-                pkill -KILL -u "$u" 2>/dev/null || true
+                # Match the exact account name: id/pkill read a numeric name
+                # such as "0" as a UID, and system accounts are never panel users.
+                uid=$(awk -F: -v n="$u" '$1 == n { print $3 }' /etc/passwd)
+                [ -n "$u" ] && [ -n "$uid" ] && [ "$uid" -ge 1000 ] || continue
+                pkill -KILL -U "$uid" 2>/dev/null || true
                 for _ in 1 2 3 4 5; do
                     userdel -r -- "$u" 2>/dev/null && break
-                    id -u -- "$u" >/dev/null 2>&1 || break
+                    awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd || break
                     sleep 1
-                    pkill -KILL -u "$u" 2>/dev/null || true
+                    pkill -KILL -U "$uid" 2>/dev/null || true
                 done
-                if id -u -- "$u" >/dev/null 2>&1; then
+                if awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd; then
                     echo "Warning: could not delete Linux account $u; remove it with: userdel -r $u"
                 fi
             done
