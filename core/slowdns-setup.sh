@@ -243,6 +243,12 @@ if [ -n "$CF_TOKEN" ] && [ -n "$ACTIVE_NS" ]; then
     fi
 fi
 
+if [ -z "$NS" ]; then
+    say "Binary and keys are ready, but no nameserver is set."
+    say "Set it in the panel menu (SLOWDNS) to start the service."
+    exit 0
+fi
+
 # ---------------------------------------------------------------------
 # 5. UDP 53 -> 5300 redirection. Keep existing equivalent rules (they
 #    may belong to the sister panel); add tagged rules only when missing.
@@ -285,12 +291,6 @@ if command -v ufw >/dev/null 2>&1; then
             ufw allow "$port" >/dev/null 2>&1 || true
         fi
     done
-fi
-
-if [ -z "$NS" ]; then
-    say "Binary and keys are ready, but no nameserver is set."
-    say "Set it in the panel menu (SLOWDNS) to start the service."
-    exit 0
 fi
 
 # Stop MasterDnsVPN if it was previously occupying UDP port 53 (theirs)
