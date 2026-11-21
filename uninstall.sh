@@ -50,7 +50,7 @@ remove_cloudflared_service() {
           /etc/systemd/system/cloudflared-update.service \
           /etc/systemd/system/cloudflared-update.timer
 }
-if installed_by_ragnar cloudflared-service; then
+if installed_by_ragnar cloudflared-service && ! sister_panel_present; then
     remove_cloudflared_service
 fi
 
