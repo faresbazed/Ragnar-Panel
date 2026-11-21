@@ -148,6 +148,30 @@ def is_expired(expiry: str) -> bool:
     return days_left(expiry) < 0
 
 
+def _edit_account_limits(u, days, quota_gb, extend, enable):
+    old_expiry = u["expiry"]
+    old_quota = u.get("quota_gb", 0)
+    if days is not None:
+        if extend:
+            base = max(_dt.date.fromisoformat(old_expiry), _today())
+            u["expiry"] = (base + _dt.timedelta(days=int(days))).isoformat()
+        else:
+            u["expiry"] = expiry_from_days(days)
+    if quota_gb is not None:
+        u["quota_gb"] = float(quota_gb)
+    if enable is None and u.get("checker_lock"):
+        old_quota = float(old_quota)
+        new_quota = float(u.get("quota_gb", 0))
+        renewed = u["expiry"] > old_expiry and days_left(u["expiry"]) > 0
+        raised_quota = old_quota > 0 and (new_quota <= 0 or new_quota > old_quota)
+        if ((renewed or raised_quota) and not is_expired(u["expiry"])
+                and not quota_exceeded(u.get("used_bytes", 0), new_quota)):
+            enable = True
+    if enable is not None:
+        u["enabled"] = bool(enable)
+        u.pop("checker_lock", None)
+
+
 # --------------------------------------------------------------------------
 # SSH users
 # --------------------------------------------------------------------------
@@ -192,20 +216,11 @@ def ssh_edit(username, days=None, quota_gb=None, ip_limit=None, password=None,
     if username not in users:
         raise ValueError(f"SSH user '{username}' not found")
     u = users[username]
-    if days is not None:
-        if extend:
-            base = max(_dt.date.fromisoformat(u["expiry"]), _today())
-            u["expiry"] = (base + _dt.timedelta(days=int(days))).isoformat()
-        else:
-            u["expiry"] = expiry_from_days(days)
-    if quota_gb is not None:
-        u["quota_gb"] = float(quota_gb)
+    _edit_account_limits(u, days, quota_gb, extend, enable)
     if ip_limit is not None:
         u["ip_limit"] = int(ip_limit)
     if password:
         u["password"] = password
-    if enable is not None:
-        u["enabled"] = bool(enable)
     save_ssh(users)
     return u
 
@@ -289,18 +304,9 @@ def xray_edit(name, days=None, quota_gb=None, ip_limit=None, extend=False, enabl
     if name not in users:
         raise ValueError(f"Xray user '{name}' not found")
     u = users[name]
-    if days is not None:
-        if extend:
-            base = max(_dt.date.fromisoformat(u["expiry"]), _today())
-            u["expiry"] = (base + _dt.timedelta(days=int(days))).isoformat()
-        else:
-            u["expiry"] = expiry_from_days(days)
-    if quota_gb is not None:
-        u["quota_gb"] = float(quota_gb)
+    _edit_account_limits(u, days, quota_gb, extend, enable)
     if ip_limit is not None:
         u["ip_limit"] = int(ip_limit)
-    if enable is not None:
-        u["enabled"] = bool(enable)
     save_xray(users)
     return u
 

@@ -5,6 +5,7 @@ scratch port and drives it with urllib: login flow, dashboard, user
 create/list over HTTP, and the Xray links page.
 """
 import http.cookiejar
+import json
 import os
 import re
 import subprocess
@@ -225,6 +226,56 @@ assert ragnar.load_xray()['custom-web']['uuid'] == '{custom_uuid}'
                                  "user": "zquick"}).encode()).read().decode()
         self.assertIn("extended by 30 days", zpage_ext)
         self.assertIn("40d", zpage_ext)
+        op.open(BASE_URL + "/zivpn/action", data=urllib.parse.urlencode(
+            {"csrf": csrf, "op": "disable", "user": "zquick"}).encode())
+        zpage_ext_off = op.open(BASE_URL + "/zivpn/action",
+                                data=urllib.parse.urlencode(
+                                    {"csrf": csrf, "op": "renew30",
+                                     "user": "zquick"}).encode()).read().decode()
+        self.assertIn("70d", zpage_ext_off)
+        self.assertIn(">disabled<", zpage_ext_off)
+
+    def test_checker_locked_xray_quick_renewal_and_quota_edit(self):
+        import urllib.parse
+        subprocess.run([sys.executable, "-c", """
+import sys
+from unittest.mock import patch
+sys.path.insert(0, 'core')
+import checker
+import ragnar
+ragnar.xray_add('web-expired', -1)
+ragnar.xray_add('web-overquota', 30, 1)
+users = ragnar.load_xray()
+users['web-overquota']['used_bytes'] = 2 * 1024 ** 3
+ragnar.save_xray(users)
+with patch.object(checker, 'run', return_value=''), patch.object(ragnar, 'apply_configs'):
+    checker.main()
+""", "--apply"], cwd=ROOT, env=dict(os.environ, RAGNAR_DIR=self.tmp),
+                       capture_output=True, text=True, check=True)
+
+        def users():
+            with open(os.path.join(self.tmp, "db", "xray.json")) as fh:
+                return json.load(fh)["users"]
+
+        op = self.opener()
+        self.login(op)
+        page = op.open(BASE_URL + "/xray").read().decode()
+        csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page).group(1)
+        self.assertFalse(users()["web-expired"]["enabled"])
+        self.assertFalse(users()["web-overquota"]["enabled"])
+
+        with self.subTest(action="quick renewal"):
+            op.open(BASE_URL + "/xray/action", data=urllib.parse.urlencode(
+                {"csrf": csrf, "op": "renew30", "user": "web-expired"}).encode())
+            self.assertTrue(users()["web-expired"]["enabled"])
+        with self.subTest(action="quota edit"):
+            page = op.open(BASE_URL + "/xray/edit?u=web-overquota").read().decode()
+            default = re.search(r'<option value="([^"]+)" selected>',
+                                page.split('<select name="enabled">')[1]).group(1)
+            op.open(BASE_URL + "/xray/edit", data=urllib.parse.urlencode(
+                {"csrf": csrf, "user": "web-overquota", "quota": "3",
+                 "enabled": default}).encode())
+            self.assertTrue(users()["web-overquota"]["enabled"])
 
     def test_base_path_mode(self):
         """The HAProxy-fronted setup: app under /panel, loopback, HTTP."""
