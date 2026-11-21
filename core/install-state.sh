@@ -67,6 +67,20 @@ ragnar_restore_files() {
     return "$failed"
 }
 
+# Components the installer itself downloaded (absent before Ragnar) are
+# recorded here so uninstall removes them without touching pre-existing ones.
+ragnar_mark_installed() {
+    case "$1" in
+        *[!A-Za-z0-9_.-]*|"") return 2 ;;
+    esac
+    mkdir -p "$RAGNAR_STATE_DIR/installed" || return 1
+    : > "$RAGNAR_STATE_DIR/installed/$1"
+}
+
+ragnar_was_installed() {
+    [ -f "$RAGNAR_STATE_DIR/installed/$1" ]
+}
+
 ragnar_capture_service_state() {
     local service="$1" snapshot enabled active
     case "$service" in

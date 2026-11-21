@@ -629,7 +629,15 @@ PY
             3) read -rsp "Tunnel token: " v; echo
                [ -n "$v" ] || { echo "No token entered; no changes made."; pause; continue; }
                systemctl stop cloudflared 2>/dev/null
+               cf_new=0
+               [ -e /etc/systemd/system/cloudflared.service ] || cf_new=1
                cloudflared service install "$v" && systemctl enable --now cloudflared
+               # Let uninstall remove the tunnel service this menu created,
+               # even if the tunnel failed to start.
+               if [ "$cf_new" = 1 ] && [ -e /etc/systemd/system/cloudflared.service ]; then
+                   mkdir -p "${RAGNAR_STATE_DIR:-/var/lib/ragnar-panel}/installed" && \
+                       : > "${RAGNAR_STATE_DIR:-/var/lib/ragnar-panel}/installed/cloudflared-service"
+               fi
                pause ;;
             4) echo "Starting quick tunnel - the https hostname appears in the log."
                echo "Point it at http://127.0.0.1:80 (the HAProxy front door)."
@@ -771,7 +779,11 @@ while true; do
         11) sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; echo "RAM cleared"; pause ;;
         12) read -rp "Reboot the VPS now? [y/N] " a; [ "$a" = y ] && reboot ;;
         13) read -rp "UNINSTALL Ragnar Panel completely? [y/N] " a
-            [ "$a" = y ] && bash "$RAGNAR_DIR/uninstall.sh" ;;
+            if [ "$a" = y ]; then
+                bash "$RAGNAR_DIR/uninstall.sh"
+                # The menu's own files are gone; do not keep drawing it.
+                [ -d "$RAGNAR_DIR" ] || exit 0
+            fi ;;
         x|X) clear_screen; echo "Bye - @farisbazed / https://t.me/ragnaresim"; exit 0 ;;
         *) invalid_choice ;;
     esac

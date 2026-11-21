@@ -145,6 +145,9 @@ ensure_go() {
            tar -C /usr/local -xzf /tmp/go.tgz >>"$BUILD_LOG" 2>&1 && \
            mv /usr/local/go /usr/local/go-1.22; then
             go_bin=/usr/local/go-1.22/bin/go
+            if command -v ragnar_mark_installed >/dev/null 2>&1; then
+                ragnar_mark_installed go-1.22 || true
+            fi
         fi
         rm -f /tmp/go.tgz
     fi

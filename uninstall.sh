@@ -11,6 +11,15 @@ if [ -r "$BASE/core/install-state.sh" ]; then
     . "$BASE/core/install-state.sh"
     HAS_STATE_HELPER=1
 fi
+RAGNAR_UNITS="ragnar-check ragnar-watchdog xray sing-box zivpn udp-custom
+    badvpn-udpgw udpgw slowdns ragnar-wsproxy ragnar-landing ragnar-web"
+installed_by_ragnar() { [ -f "$STATE_DIR/installed/$1" ]; }
+# The sister panel (/etc/vps-panel) reuses Xray, sing-box and cloudflared, so
+# components Ragnar downloaded are kept while it is installed.
+sister_panel_present() {
+    [ -d /usr/local/share/vps-panel ] && return 0
+    [ -d /etc/vps-panel ] && find /etc/vps-panel -mindepth 1 -maxdepth 1 ! -name slowdns | grep -q .
+}
 
 [ "$(id -u)" = 0 ] || { echo "Run as root"; exit 1; }
 echo "This removes Ragnar Panel services, configs and firewall rules."
@@ -30,11 +39,24 @@ done
 if [ "$HAS_STATE_HELPER" -eq 0 ]; then
     systemctl disable haproxy 2>/dev/null || true
 fi
+# A Cloudflare tunnel installed from the panel menu would otherwise keep
+# publishing this server after the panel is gone.
+remove_cloudflared_service() {
+    if command -v cloudflared >/dev/null 2>&1; then
+        cloudflared service uninstall >/dev/null 2>&1 || true
+    fi
+    systemctl disable --now cloudflared cloudflared-update.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/cloudflared.service \
+          /etc/systemd/system/cloudflared-update.service \
+          /etc/systemd/system/cloudflared-update.timer
+}
+if installed_by_ragnar cloudflared-service && ! sister_panel_present; then
+    remove_cloudflared_service
+fi
 
 # Remove leftovers from older installs too. The state helper below restores
 # any pre-existing versions captured by the newer installer.
-for u in ragnar-check ragnar-watchdog xray sing-box zivpn udp-custom \
-         badvpn-udpgw udpgw slowdns ragnar-wsproxy ragnar-landing ragnar-web; do
+for u in $RAGNAR_UNITS; do
     rm -f "/etc/systemd/system/$u.service" "/etc/systemd/system/$u.timer"
 done
 
@@ -94,6 +116,16 @@ delete_rule iptables nat PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 \
     -m comment --comment ragnar-slowdns -j REDIRECT --to-ports 5300
 delete_rule ip6tables nat PREROUTING ! -d ::1/128 -p udp --dport 53 \
     -m comment --comment ragnar-slowdns -j REDIRECT --to-ports 5300
+# udp-custom (stopped above) inserts these untagged rules itself on every start.
+delete_rule iptables filter INPUT -p udp --dport 36712 -j ACCEPT
+if command -v iptables >/dev/null 2>&1; then
+    iptables -t nat -S PREROUTING 2>/dev/null \
+        | grep -E -- '-p udp -m udp --dport 1:65535 -j DNAT --to-destination :36712$' \
+        | while read -ra rule; do
+            rule[0]=-D
+            iptables -t nat "${rule[@]}" 2>/dev/null || true
+        done
+fi
 
 # Remove UFW allowances only when the installer recorded that it added them.
 if [ -r "$STATE_DIR/ufw-added" ] && command -v ufw >/dev/null 2>&1; then
@@ -189,7 +221,7 @@ PY
 # /etc/vps-panel/slowdns is deliberately retained for the sister panel.
 rm -f /etc/sysctl.d/99-ragnar-tuning.conf /etc/ssh/sshd_config.d/60-ragnar.conf
 rm -f /usr/local/bin/menu /usr/local/bin/ragnar /usr/local/bin/zivpn \
-      /usr/local/bin/udp-custom /usr/local/bin/badvpn-udpgw
+      /usr/local/bin/udp-custom /usr/local/bin/badvpn-udpgw /usr/local/bin/udpgw
 
 if [ -f "$BASE/db/ssh.json" ]; then
     echo "Panel SSH users:"
@@ -197,8 +229,24 @@ if [ -f "$BASE/db/ssh.json" ]; then
     b=""
     read -rp "Delete these Linux accounts too? [y/N] " b || true
     if [ "$b" = y ]; then
+        # userdel refuses accounts with live sessions, so end them first.
         python3 -c "import json;print('\n'.join(json.load(open('$BASE/db/ssh.json'))['users']))" \
-            | while IFS= read -r u; do [ -n "$u" ] && userdel -r -- "$u" 2>/dev/null || true; done
+            | while IFS= read -r u; do
+                # Match the exact account name: id/pkill read a numeric name
+                # such as "0" as a UID, and system accounts are never panel users.
+                uid=$(awk -F: -v n="$u" '$1 == n { print $3 }' /etc/passwd)
+                [ -n "$u" ] && [ -n "$uid" ] && [ "$uid" -ge 1000 ] || continue
+                pkill -KILL -U "$uid" 2>/dev/null || true
+                for _ in 1 2 3 4 5; do
+                    userdel -r -- "$u" 2>/dev/null && break
+                    awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd || break
+                    sleep 1
+                    pkill -KILL -U "$uid" 2>/dev/null || true
+                done
+                if awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd; then
+                    echo "Warning: could not delete Linux account $u; remove it with: userdel -r $u"
+                fi
+            done
     fi
 fi
 
@@ -208,7 +256,50 @@ else
     rm -f /etc/systemd/system/haproxy.service.d/10-ragnar.conf
 fi
 rmdir /etc/systemd/system/haproxy.service.d 2>/dev/null || true
+
+# Remove upstream components only when this installer downloaded them.
+if [ "$HAS_STATE_HELPER" -eq 1 ] && ! sister_panel_present; then
+    if installed_by_ragnar xray; then
+        systemctl disable --now xray 2>/dev/null || true
+        rm -rf /usr/local/bin/xray /usr/local/share/xray /usr/local/etc/xray /var/log/xray \
+               /etc/systemd/system/xray.service /etc/systemd/system/xray@.service \
+               /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d \
+               /etc/logrotate.d/xray
+    fi
+    if installed_by_ragnar sing-box; then
+        systemctl disable --now sing-box 2>/dev/null || true
+        if dpkg -s sing-box >/dev/null 2>&1; then
+            dpkg --purge sing-box >/dev/null 2>&1 || echo "Warning: could not remove the sing-box package."
+        fi
+        # The package creates this service account but its purge keeps it.
+        if getent passwd sing-box >/dev/null 2>&1; then
+            userdel sing-box 2>/dev/null || true
+        fi
+        if getent group sing-box >/dev/null 2>&1; then
+            groupdel sing-box 2>/dev/null || true
+        fi
+    fi
+    if installed_by_ragnar cloudflared && dpkg -s cloudflared >/dev/null 2>&1; then
+        # A tunnel service left behind would only crash-loop without its binary.
+        remove_cloudflared_service
+        dpkg --purge cloudflared >/dev/null 2>&1 || echo "Warning: could not remove the cloudflared package."
+        rmdir /etc/cloudflared 2>/dev/null || true
+    fi
+    if installed_by_ragnar go-1.22; then
+        rm -rf /usr/local/go-1.22
+    fi
+fi
+
+# Units removed above may still be linked from *.wants directories.
+for u in $RAGNAR_UNITS cloudflared cloudflared-update; do
+    for link in /etc/systemd/system/*.wants/"$u".service /etc/systemd/system/*.wants/"$u".timer; do
+        [ -L "$link" ] && [ ! -e "$link" ] && rm -f "$link"
+    done
+done
 systemctl daemon-reload
+for u in $RAGNAR_UNITS; do
+    systemctl reset-failed "$u.service" "$u.timer" 2>/dev/null || true
+done
 
 if command -v sshd >/dev/null 2>&1 && sshd -t 2>/dev/null; then
     systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
@@ -229,6 +320,12 @@ fi
 
 rm -rf "$BASE"
 [ "$HAS_STATE_HELPER" -eq 0 ] || rm -rf "$STATE_DIR"
+rm -rf /tmp/ragnar-update.* /tmp/ragnar-update-self.*.sh
+rm -f /tmp/ragnar-certbot.log /tmp/ragnar-slowdns-build.log /var/lock/ragnar-update.lock
+rmdir /etc/vps-panel/slowdns /etc/vps-panel 2>/dev/null || true
+# Created empty by the installer / cloudflared even when nothing else was kept.
+rmdir /usr/local/etc/xray /usr/local/etc/cloudflared 2>/dev/null || true
 echo "Ragnar Panel removed; pre-existing managed files and service states were restored where recorded."
-echo "Shared /etc/vps-panel SlowDNS state, upstream binaries, and required system packages were left in place."
+echo "Required system packages, components that existed before Ragnar, and any shared"
+echo "/etc/vps-panel SlowDNS state still used by the sister panel were left in place."
 echo "Bye - @farisbazed / https://t.me/ragnaresim"

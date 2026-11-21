@@ -35,9 +35,12 @@ menu        # or: ragnar
 
 Uninstall from the menu (option **13**) or `sudo bash /etc/ragnar/uninstall.sh`.
 It restores configuration and service state captured before the installer
-changes them, and removes only firewall rules tagged as Ragnar-owned. Upstream
-tools and required Debian/Ubuntu packages are left installed; shared SlowDNS
-data in `/etc/vps-panel/slowdns` is kept for the sister panel. An older install
+changes them, and removes only firewall rules tagged as Ragnar-owned (plus the
+rules udp-custom adds for itself). Xray, sing-box, cloudflared (and a tunnel
+service created from the menu) and the Go toolchain are removed when Ragnar
+installed them and the sister panel is not present; components that existed
+before Ragnar and required Debian/Ubuntu packages are left installed. Shared
+SlowDNS data in `/etc/vps-panel/slowdns` is kept for the sister panel. An older install
 may already have overwritten a file before snapshots existed, so that original
 cannot always be reconstructed automatically when upgrading from an older
 release.
