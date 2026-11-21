@@ -17,7 +17,10 @@ Environment:
 No third-party packages. Python 3.8+.
 """
 import base64
+import contextlib
 import datetime as _dt
+import fcntl
+import functools
 import json
 import os
 import pwd
@@ -25,6 +28,7 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import uuid as _uuid
 
@@ -83,12 +87,64 @@ def _read_json(path, default):
         return default
 
 
-def _write_json(path, data):
+_account_mutex = threading.RLock()
+_account_local = threading.local()
+
+
+@contextlib.contextmanager
+def account_lock():
+    """Serialize account transactions across threads and panel processes."""
+    with _account_mutex:
+        depth = getattr(_account_local, "depth", 0)
+        if depth:
+            _account_local.depth += 1
+            try:
+                yield
+            finally:
+                _account_local.depth -= 1
+            return
+        lock_dir = os.path.join(BASE, "db")
+        os.makedirs(lock_dir, exist_ok=True)
+        with open(os.path.join(lock_dir, "accounts.lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            _account_local.depth = 1
+            try:
+                yield
+            finally:
+                _account_local.depth = 0
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def account_transaction(fn):
+    @functools.wraps(fn)
+    def locked(*args, **kwargs):
+        with account_lock():
+            return fn(*args, **kwargs)
+    return locked
+
+
+def _atomic_json(path, rendered, mode=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    while True:
+        tmp = path + "." + secrets.token_hex(16) + ".tmp"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            break
+        except FileExistsError:
+            continue
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(rendered)
+            if mode is not None:
+                os.fchmod(fh.fileno(), mode)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _write_json(path, data):
+    _atomic_json(path, json.dumps(data, indent=2, sort_keys=True))
 
 
 def _write_json_if_changed(path, data):
@@ -100,11 +156,7 @@ def _write_json_if_changed(path, data):
                 return False
     except OSError:
         pass
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(rendered)
-    os.replace(tmp, path)
+    _atomic_json(path, rendered)
     return True
 
 
@@ -192,6 +244,7 @@ def _validate_username(username):
             "Invalid username (use 1-32 letters, digits, '.', '_' or '-', not 'root')")
 
 
+@account_transaction
 def ssh_add(username, password, days, quota_gb, ip_limit):
     _validate_username(username)
     users = load_ssh()
@@ -210,6 +263,7 @@ def ssh_add(username, password, days, quota_gb, ip_limit):
     return users[username]
 
 
+@account_transaction
 def ssh_edit(username, days=None, quota_gb=None, ip_limit=None, password=None,
              extend=False, enable=None):
     users = load_ssh()
@@ -225,6 +279,7 @@ def ssh_edit(username, days=None, quota_gb=None, ip_limit=None, password=None,
     return u
 
 
+@account_transaction
 def ssh_del(username):
     users = load_ssh()
     if username not in users:
@@ -249,6 +304,7 @@ def _ss_password():
     return base64.b64encode(os.urandom(16)).decode()
 
 
+@account_transaction
 def _ss_server_key():
     raw = _read_json(SETTINGS, {})
     key = raw.get("ss_server_key")
@@ -276,6 +332,7 @@ def _normalize_xray_uuid(value):
     return str(parsed)
 
 
+@account_transaction
 def xray_add(name, days, quota_gb=0, ip_limit=0, custom_uuid=None):
     users = load_xray()
     if name in users:
@@ -299,6 +356,7 @@ def xray_add(name, days, quota_gb=0, ip_limit=0, custom_uuid=None):
     return users[name]
 
 
+@account_transaction
 def xray_edit(name, days=None, quota_gb=None, ip_limit=None, extend=False, enable=None):
     users = load_xray()
     if name not in users:
@@ -311,6 +369,7 @@ def xray_edit(name, days=None, quota_gb=None, ip_limit=None, extend=False, enabl
     return u
 
 
+@account_transaction
 def xray_del(name):
     users = load_xray()
     if name not in users:
@@ -331,6 +390,7 @@ def load_zivpn():
     return _read_json(ZIVPN_DB, {"users": {}})["users"]
 
 
+@account_transaction
 def zivpn_add(name, password, days):
     users = load_zivpn()
     if name in users:
@@ -341,6 +401,7 @@ def zivpn_add(name, password, days):
     return users[name]
 
 
+@account_transaction
 def zivpn_del(name):
     users = load_zivpn()
     if name not in users:
@@ -349,6 +410,7 @@ def zivpn_del(name):
     _write_json(ZIVPN_DB, {"users": users})
 
 
+@account_transaction
 def zivpn_edit(name, days=None, password=None, extend=False, enable=None):
     users = load_zivpn()
     if name not in users:
@@ -459,6 +521,7 @@ def gen_singbox_config():
     }
 
 
+@account_transaction
 def _zivpn_fallback_password():
     raw = _read_json(SETTINGS, {})
     password = raw.get("zivpn_fallback_password")

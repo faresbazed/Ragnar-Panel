@@ -9,7 +9,10 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 TMP = tempfile.mkdtemp(prefix="ragnar-test-")
 os.environ["RAGNAR_DIR"] = TMP
@@ -283,6 +286,97 @@ class TestBorderedTables(unittest.TestCase):
         self.assertEqual(R._fmt_bytes_short(0), "0B")
         self.assertEqual(R._fmt_bytes_short(28 * 1024), "28K")
         self.assertEqual(R._fmt_bytes_short(int(1.13 * 1024 ** 3)), "1.13G")
+
+
+class TestConcurrentWrites(unittest.TestCase):
+    def test_lock_reentrant_and_released_on_error(self):
+        with self.assertRaises(ValueError):
+            with R.account_lock():
+                with R.account_lock():
+                    raise ValueError("stop")
+        with ThreadPoolExecutor(1) as pool:
+            def acquire():
+                with R.account_lock():
+                    return True
+            self.assertTrue(pool.submit(acquire).result(timeout=2))
+
+    def test_processes_preserve_concurrent_users(self):
+        with tempfile.TemporaryDirectory() as base:
+            env = dict(os.environ, RAGNAR_DIR=base)
+            code = ("import sys; import ragnar; "
+                    "[ragnar.xray_add(sys.argv[1] + str(n), 30) for n in range(10)]")
+            processes = [subprocess.Popen([sys.executable, "-c", code, str(n)],
+                         cwd=os.path.dirname(R.__file__), env=env) for n in range(4)]
+            for process in processes:
+                self.assertEqual(process.wait(timeout=10), 0)
+            data = R._read_json(os.path.join(base, "db", "xray.json"), {})
+            self.assertEqual(len(data["users"]), 40)
+
+    def test_atomic_write_failure_cleans_up(self):
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "data.json")
+            R._write_json(path, {"original": True})
+            with patch.object(R.os, "replace", side_effect=OSError("failed")):
+                for writer in (R._write_json, R._write_json_if_changed):
+                    with self.assertRaises(OSError):
+                        writer(path, {"changed": True})
+            self.assertEqual(R._read_json(path, {}), {"original": True})
+            self.assertEqual(os.listdir(base), ["data.json"])
+
+    def test_account_add_preserves_concurrent_users(self):
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "xray.json")
+            with patch.object(R, "XRAY_DB", path):
+                R.xray_add("alice", 30)
+                load = R.load_xray
+                barrier = threading.Barrier(2)
+                write = R._write_json
+                write_lock = threading.Lock()
+
+                def serialized_write(*args):
+                    with write_lock:
+                        return write(*args)
+
+                def delayed_load():
+                    users = load()
+                    try:
+                        barrier.wait(timeout=0.2)
+                    except threading.BrokenBarrierError:
+                        pass
+                    return users
+
+                with patch.object(R, "load_xray", side_effect=delayed_load), \
+                     patch.object(R, "_write_json", side_effect=serialized_write):
+                    with ThreadPoolExecutor(2) as pool:
+                        futures = [pool.submit(R.xray_add, name, 30)
+                                   for name in ("bob", "carol")]
+                        for future in futures:
+                            future.result()
+                self.assertEqual(set(load()), {"alice", "bob", "carol"})
+
+    def test_atomic_writers_use_independent_temporary_files(self):
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "data.json")
+            replace = os.replace
+            for writer in (R._write_json, R._write_json_if_changed):
+                R._write_json(path, {"value": 0})
+                barrier = threading.Barrier(2)
+                sources = []
+
+                def delayed_replace(src, dst):
+                    sources.append(src)
+                    barrier.wait(timeout=2)
+                    return replace(src, dst)
+
+                with patch.object(R.os, "replace", side_effect=delayed_replace):
+                    with ThreadPoolExecutor(2) as pool:
+                        futures = [pool.submit(writer, path, {"value": n})
+                                   for n in (1, 2)]
+                        for future in futures:
+                            future.result()
+                self.assertEqual(len(set(sources)), 2)
+                self.assertIn(R._read_json(path, {}), ({"value": 1}, {"value": 2}))
+                self.assertEqual(os.listdir(base), ["data.json"])
 
 
 if __name__ == "__main__":

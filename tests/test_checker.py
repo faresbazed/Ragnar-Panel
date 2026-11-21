@@ -3,7 +3,9 @@ import io
 import os
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "core"))
@@ -183,6 +185,35 @@ class TestCheckerLocks(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()) as log:
             self.assertEqual(C.main(), 0)
         return log.getvalue()
+
+    def test_usage_save_preserves_concurrent_add(self):
+        self.ragnar.xray_add("alice", 30)
+        loaded = threading.Event()
+        added = threading.Event()
+        load = self.ragnar.load_xray
+
+        def delayed_load():
+            users = load()
+            loaded.set()
+            added.wait(timeout=0.2)
+            return users
+
+        def add_user():
+            self.assertTrue(loaded.wait(timeout=2))
+            self.ragnar.xray_add("bob", 30)
+            added.set()
+
+        with patch.object(C, "run", return_value=""), \
+             patch.object(C, "ensure_iptables_rules"), \
+             patch.object(C, "xray_deltas", return_value={"alice": 100}), \
+             patch.object(self.ragnar, "load_xray", side_effect=delayed_load):
+            with ThreadPoolExecutor(2) as pool:
+                usage = pool.submit(C.accumulate_usage, "")
+                add = pool.submit(add_user)
+                usage.result(timeout=5)
+                add.result(timeout=5)
+        self.assertEqual(set(load()), {"alice", "bob"})
+        self.assertEqual(load()["alice"]["used_bytes"], 100)
 
     def ssh_edit(self, user, *args):
         with patch.object(self.ragnar.subprocess, "run") as run, \

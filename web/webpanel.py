@@ -94,11 +94,7 @@ def load_web_cfg():
 
 def save_web_cfg(cfg):
     os.makedirs(BASE, exist_ok=True)
-    tmp = WEB_JSON + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, WEB_JSON)
+    ragnar._atomic_json(WEB_JSON, json.dumps(cfg, indent=2), mode=0o600)
     try:
         mtime = os.stat(WEB_JSON).st_mtime_ns
     except OSError:
