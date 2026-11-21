@@ -3,7 +3,7 @@
 Ragnar limit checker - run every minute by ragnar-check.timer.
 
 Enforces, for every panel user:
-  * expiry date          (SSH: lock account + kill sessions; Xray: disable + regen)
+  * expiry date          (SSH: lock + kill sessions; Xray/ZIVPN: disable + regen)
   * GB quota             (same actions; counters below)
   * SSH IP limit         (extra source IPs get ONLY that user's extra sessions killed)
 
@@ -266,9 +266,11 @@ def main():
     ss_text = run("ss -tnpi state established 2>/dev/null")
     ssh, xr = accumulate_usage(ss_text)
     live = ssh_live_ips(ss_text)
-    plan = ragnar.enforcement_plan(ssh, xr, live)
+    zivpn = ragnar.load_zivpn()
+    plan = ragnar.enforcement_plan(ssh, xr, live, zivpn)
     ssh_dirty = False
     xray_dirty = False
+    zivpn_dirty = False
     for item in plan:
         print(f"{item['kind']}/{item['user']}: {item['action']} ({item['reason']})")
         if not apply_mode:
@@ -290,11 +292,17 @@ def main():
         elif item["kind"] == "xray" and item["action"] == "remove":
             xr[user]["enabled"] = False
             xray_dirty = True
+        elif item["kind"] == "zivpn" and item["action"] == "remove":
+            zivpn[user]["enabled"] = False
+            zivpn_dirty = True
     if ssh_dirty:
         ragnar.save_ssh(ssh)
         ragnar.sync_udp_custom()
     if xray_dirty:
         ragnar.save_xray(xr)
+    if zivpn_dirty:
+        ragnar._write_json(ragnar.ZIVPN_DB, {"users": zivpn})
+    if xray_dirty or zivpn_dirty:
         ragnar.apply_configs()
     if not plan:
         print("all users within limits")

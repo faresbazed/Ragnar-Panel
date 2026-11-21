@@ -595,7 +595,7 @@ def ip_limit_exceeded(distinct_ips, ip_limit):
     return len(set(distinct_ips)) > int(ip_limit)
 
 
-def enforcement_plan(ssh_users, xray_users, live_ips):
+def enforcement_plan(ssh_users, xray_users, live_ips, zivpn_users=None):
     """Return {action-list} for expired / over-quota / over-IP users.
 
     Already-disabled accounts are skipped so the 1-minute timer does not
@@ -619,6 +619,9 @@ def enforcement_plan(ssh_users, xray_users, live_ips):
             plan.append({"kind": "xray", "user": name, "action": "remove", "reason": "expired"})
         elif quota_exceeded(u.get("used_bytes", 0), u.get("quota_gb", 0)):
             plan.append({"kind": "xray", "user": name, "action": "remove", "reason": "quota"})
+    for name, u in (zivpn_users or {}).items():
+        if u.get("enabled", True) and is_expired(u["expiry"]):
+            plan.append({"kind": "zivpn", "user": name, "action": "remove", "reason": "expired"})
     return plan
 
 
