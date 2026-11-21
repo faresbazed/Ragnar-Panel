@@ -1061,9 +1061,17 @@ def sync_linux_user(username, password, expiry, enabled=True):
         if not exists:
             _run_account_command(["useradd", "-m", "-s", "/bin/false",
                                   "-e", str(expiry), username])
-        _run_account_command(["chpasswd"], input=f"{username}:{password}\n")
-        _run_account_command(["chage", "-E", str(expiry), username])
-        _run_account_command(["usermod", "-U" if enabled else "-L", username])
+        if not enabled:
+            _run_account_command(["usermod", "-L", username])
+            sync_udp_custom()
+        try:
+            _run_account_command(["chpasswd"], input=f"{username}:{password}\n")
+            _run_account_command(["chage", "-E", str(expiry), username])
+        finally:
+            if not enabled:
+                _run_account_command(["usermod", "-L", username])
+        if enabled:
+            _run_account_command(["usermod", "-U", username])
     except SSHSyncError as exc:
         if not exists:
             try:
@@ -1074,7 +1082,8 @@ def sync_linux_user(username, password, expiry, enabled=True):
             except (OSError, SSHSyncError) as cleanup:
                 raise SSHSyncError(f"{exc}; rollback failed: {cleanup}") from exc
         raise
-    sync_udp_custom()
+    if enabled:
+        sync_udp_custom()
 
 
 # --------------------------------------------------------------------------

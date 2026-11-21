@@ -320,6 +320,37 @@ class TestBorderedTables(unittest.TestCase):
 
 
 class TestSSHCreation(unittest.TestCase):
+    def test_disable_locks_before_fallible_updates(self):
+        for failure in (None, 'chpasswd', 'chage'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as base, \
+                 patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')):
+                account = R.ssh_add('disable-user', 'password', 30, 0, 0)
+                R.ssh_edit('disable-user', enable=False)
+                calls = []
+
+                def run(args, **kwargs):
+                    calls.append(args)
+                    rc = int(args[0] == failure)
+                    return subprocess.CompletedProcess(args, rc, '', '')
+
+                def sync_udp():
+                    self.assertEqual(calls[-1], ['usermod', '-L', 'disable-user'])
+                    self.assertNotIn('disable-user:password',
+                                     R.gen_udp_custom_config()['auth']['config'])
+
+                with patch.object(R.subprocess, 'run', side_effect=run), \
+                     patch.object(R, 'sync_udp_custom', side_effect=sync_udp) as sync:
+                    if failure:
+                        with self.assertRaisesRegex(R.SSHSyncError, failure):
+                            R.sync_linux_user('disable-user', 'password', account['expiry'], False)
+                    else:
+                        R.sync_linux_user('disable-user', 'password', account['expiry'], False)
+                self.assertEqual(calls[1], ['usermod', '-L', 'disable-user'])
+                self.assertEqual(calls[-1], ['usermod', '-L', 'disable-user'])
+                self.assertNotIn(['usermod', '-U', 'disable-user'], calls)
+                self.assertNotIn('userdel', [args[0] for args in calls])
+                sync.assert_called_once_with()
+
     def test_success_and_duplicate(self):
         with tempfile.TemporaryDirectory() as base, \
              patch.object(R, 'SSH_DB', os.path.join(base, 'ssh.json')), \
