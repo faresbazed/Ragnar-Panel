@@ -398,6 +398,47 @@ class TestSSHCreation(unittest.TestCase):
                     self.assertIn('userdel', calls)
 
 
+    def test_foreign_host_account_is_rejected(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")), \
+             patch.object(R.pwd, "getpwnam"), \
+             patch.object(R.subprocess, "run") as run, \
+             patch.object(R, "sync_udp_custom") as sync, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            rc = R.main(["ssh-add", "ubuntu", "password", "30", "0", "0"])
+            self.assertEqual(rc, 1, output.getvalue().strip())
+            self.assertIn("not managed by the panel", json.loads(output.getvalue())["error"])
+            self.assertEqual(R.load_ssh(), {})
+            run.assert_not_called()
+            sync.assert_not_called()
+
+    def test_new_host_account_can_be_created(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")), \
+             patch.object(R.pwd, "getpwnam", side_effect=KeyError("new-user")):
+            account = R.ssh_add("new-user", "password", 30, 0, 0)
+            self.assertEqual(R.load_ssh()["new-user"], account)
+
+    def test_host_lookup_error_does_not_create_record(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")), \
+             patch.object(R.pwd, "getpwnam", side_effect=OSError("lookup failed")):
+            with self.assertRaisesRegex(OSError, "lookup failed"):
+                R.ssh_add("new-user", "password", 30, 0, 0)
+            self.assertEqual(R.load_ssh(), {})
+
+    def test_managed_host_account_can_still_be_synced(self):
+        with tempfile.TemporaryDirectory() as base, \
+             patch.object(R, "SSH_DB", os.path.join(base, "ssh.json")), \
+             patch.object(R.pwd, "getpwnam", side_effect=KeyError("managed-user")):
+            account = R.ssh_add("managed-user", "password", 30, 0, 0)
+            with patch.object(R.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 0, "", "")) as run, patch.object(R, "sync_udp_custom"):
+                R.sync_linux_user("managed-user", account["password"], account["expiry"])
+            self.assertEqual([call.args[0][0] for call in run.call_args_list],
+                             ["id", "chpasswd", "chage", "usermod"])
+
+
 class TestSSHDeletion(unittest.TestCase):
     def test_busy_linux_user_keeps_panel_record(self):
         username = "active-user"

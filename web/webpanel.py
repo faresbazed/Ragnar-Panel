@@ -2168,10 +2168,10 @@ def do_user_action(kind, form):
             days = int(form.get("days", 30))
             if kind == "ssh":
                 ragnar.ssh_create(user, form.get("password", ""), days,
-                                  float(form.get("quota", 0)),
+                                  ragnar.parse_quota(form.get("quota", 0)),
                                   int(form.get("iplimit", 0)))
             elif kind == "xray":
-                ragnar.xray_add(user, days, float(form.get("quota", 0)),
+                ragnar.xray_add(user, days, ragnar.parse_quota(form.get("quota", 0)),
                                 int(form.get("iplimit", 0)),
                                 form.get("uuid", ""))
                 ragnar.apply_configs()
@@ -2235,7 +2235,7 @@ def do_edit(kind, form):
             if days > 0:
                 kw.update(days=days, extend=True)
             if "quota" in form:
-                kw["quota_gb"] = float(form["quota"])
+                kw["quota_gb"] = ragnar.parse_quota(form["quota"])
             if "iplimit" in form:
                 kw["ip_limit"] = int(form["iplimit"])
             if password:
@@ -2248,7 +2248,7 @@ def do_edit(kind, form):
             if days > 0:
                 kw.update(days=days, extend=True)
             if "quota" in form:
-                kw["quota_gb"] = float(form["quota"])
+                kw["quota_gb"] = ragnar.parse_quota(form["quota"])
             if "iplimit" in form:
                 kw["ip_limit"] = int(form["iplimit"])
             ragnar.xray_edit(user, **kw)

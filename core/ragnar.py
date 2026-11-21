@@ -22,6 +22,7 @@ import datetime as _dt
 import fcntl
 import functools
 import json
+import math
 import os
 import pwd
 import re
@@ -210,6 +211,13 @@ def is_expired(expiry: str) -> bool:
     return days_left(expiry) < 0
 
 
+def parse_quota(quota_gb):
+    quota = float(quota_gb)
+    if not math.isfinite(quota):
+        raise ValueError("Quota must be finite")
+    return quota
+
+
 def _edit_account_limits(u, days, quota_gb, extend, enable):
     old_expiry = u["expiry"]
     old_quota = u.get("quota_gb", 0)
@@ -220,7 +228,7 @@ def _edit_account_limits(u, days, quota_gb, extend, enable):
         else:
             u["expiry"] = expiry_from_days(days)
     if quota_gb is not None:
-        u["quota_gb"] = float(quota_gb)
+        u["quota_gb"] = parse_quota(quota_gb)
     if enable is None and u.get("checker_lock"):
         old_quota = float(old_quota)
         new_quota = float(u.get("quota_gb", 0))
@@ -260,11 +268,17 @@ def ssh_add(username, password, days, quota_gb, ip_limit):
     users = load_ssh()
     if username in users:
         raise ValueError(f"SSH user '{username}' already exists")
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        pass
+    else:
+        raise ValueError(f"Linux user '{username}' already exists and is not managed by the panel")
     users[username] = {
         "password": password,
         "created": _today().isoformat(),
         "expiry": expiry_from_days(days),
-        "quota_gb": float(quota_gb),
+        "quota_gb": parse_quota(quota_gb),
         "used_bytes": 0,
         "ip_limit": int(ip_limit),
         "enabled": True,
@@ -400,7 +414,7 @@ def xray_add(name, days, quota_gb=0, ip_limit=0, custom_uuid=None):
         "ss_password": _ss_password(),       # shadowsocks-2022 password
         "created": _today().isoformat(),
         "expiry": expiry_from_days(days),
-        "quota_gb": float(quota_gb),
+        "quota_gb": parse_quota(quota_gb),
         "used_bytes": 0,
         "ip_limit": int(ip_limit),
         "enabled": True,
@@ -700,9 +714,11 @@ def ssh_info(username):
 # Enforcement logic (pure - unit tested; the cron wrapper acts on results)
 # --------------------------------------------------------------------------
 def quota_exceeded(used_bytes, quota_gb):
-    if not quota_gb or float(quota_gb) <= 0:
+    quota = float(quota_gb or 0)
+    if not math.isfinite(quota) or quota <= 0:
         return False
-    return int(used_bytes) >= int(float(quota_gb) * 1024 ** 3)
+    numerator, denominator = quota.as_integer_ratio()
+    return int(used_bytes) >= numerator * 1024 ** 3 // denominator
 
 
 def ip_limit_exceeded(distinct_ips, ip_limit):
