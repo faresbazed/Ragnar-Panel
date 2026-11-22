@@ -6,14 +6,9 @@ set -u
 BASE="/etc/ragnar"
 RAGNAR_STATE_DIR="${RAGNAR_STATE_DIR:-/var/lib/ragnar-panel}"
 STATE_DIR="$RAGNAR_STATE_DIR"
-HAS_STATE_HELPER=0
-if [ -r "$BASE/core/install-state.sh" ]; then
-    . "$BASE/core/install-state.sh"
-    HAS_STATE_HELPER=1
-fi
-RAGNAR_UNITS="ragnar-check ragnar-watchdog xray sing-box zivpn udp-custom
-    badvpn-udpgw udpgw slowdns ragnar-wsproxy ragnar-landing ragnar-web"
-installed_by_ragnar() { [ -f "$STATE_DIR/installed/$1" ]; }
+die() { echo "Uninstall stopped: $*" >&2; exit 1; }
+registered() { [ -f "$STATE_DIR/registered$1" ] && [ ! -L "$STATE_DIR/registered$1" ]; }
+installed_by_ragnar() { [ -f "$STATE_DIR/installed/$1" ] && [ ! -L "$STATE_DIR/installed/$1" ]; }
 # The sister panel (/etc/vps-panel) reuses Xray, sing-box and cloudflared, so
 # components Ragnar downloaded are kept while it is installed.
 sister_panel_present() {
@@ -22,6 +17,23 @@ sister_panel_present() {
 }
 
 [ "$(id -u)" = 0 ] || { echo "Run as root"; exit 1; }
+if [ ! -e "$BASE" ] && [ ! -e "$STATE_DIR/registered" ]; then
+    echo "No Ragnar installation found; nothing changed."
+    exit 0
+fi
+[ -f "$BASE/core/ragnar.py" ] || die "Missing panel files; nothing changed."
+[ -r "$BASE/core/install-state.sh" ] || die "Missing installer state helper; nothing changed."
+# Use the helper shipped with this uninstaller, including when run from a checkout.
+. "$(dirname "${BASH_SOURCE[0]}")/core/install-state.sh" || die "Cannot load state helper."
+[ "$STATE_DIR" != / ] && [ "$(realpath -e -- "$STATE_DIR")" = "$STATE_DIR" ] &&
+    [ "$(stat -c '%u:%a' -- "$STATE_DIR")" = 0:700 ] ||
+    die "Expected a private, root-owned installer state directory at $STATE_DIR; nothing changed."
+for dir in registered original services; do
+    [ -d "$STATE_DIR/$dir" ] && [ ! -L "$STATE_DIR/$dir" ] ||
+        die "Missing or invalid installer state: $STATE_DIR/$dir; nothing changed."
+done
+[ ! -L "$STATE_DIR/installed" ] || die "Invalid component records; nothing changed."
+[ -n "$(find "$STATE_DIR/registered" -type f -print -quit)" ] || die "Empty file registry; nothing changed."
 echo "This removes Ragnar Panel services, configs and firewall rules."
 a=""
 read -rp "Continue? [y/N] " a || true
@@ -29,16 +41,21 @@ read -rp "Continue? [y/N] " a || true
 
 # HAProxy is the front door, so stop it before its backends. Do not change
 # enablement yet: the pre-install state is restored after the files/units.
-systemctl stop haproxy 2>/dev/null || true
-for svc in ragnar-check.timer ragnar-watchdog.timer ragnar-check ragnar-watchdog \
-           xray sing-box zivpn udp-custom badvpn-udpgw udpgw slowdns \
-           ragnar-wsproxy ragnar-landing ragnar-web dropbear vnstat; do
-    systemctl stop "$svc" 2>/dev/null || true
-    systemctl disable "$svc" 2>/dev/null || true
+managed_units=()
+stop_unit() {
+    systemctl stop "$1" || [ "$(systemctl show --property=LoadState --value "$1")" = not-found ] ||
+        die "Cannot stop $1; state retained."
+}
+if registered /etc/haproxy/haproxy.cfg; then stop_unit haproxy; fi
+for unit in ragnar-check.timer ragnar-watchdog.timer ragnar-check.service ragnar-watchdog.service \
+            xray.service sing-box.service zivpn.service udp-custom.service badvpn-udpgw.service \
+            udpgw.service slowdns.service ragnar-wsproxy.service ragnar-landing.service ragnar-web.service; do
+    registered "/etc/systemd/system/$unit" || continue
+    managed_units+=("$unit")
+    stop_unit "$unit"
+    systemctl disable "$unit" 2>/dev/null || true
 done
-if [ "$HAS_STATE_HELPER" -eq 0 ]; then
-    systemctl disable haproxy 2>/dev/null || true
-fi
+if registered /etc/default/dropbear; then stop_unit dropbear; fi
 # A Cloudflare tunnel installed from the panel menu would otherwise keep
 # publishing this server after the panel is gone.
 remove_cloudflared_service() {
@@ -51,34 +68,7 @@ remove_cloudflared_service() {
           /etc/systemd/system/cloudflared-update.timer
 }
 if installed_by_ragnar cloudflared-service && ! sister_panel_present; then
-    remove_cloudflared_service
-fi
-
-# Remove leftovers from older installs too. The state helper below restores
-# any pre-existing versions captured by the newer installer.
-for u in $RAGNAR_UNITS; do
-    rm -f "/etc/systemd/system/$u.service" "/etc/systemd/system/$u.timer"
-done
-
-# A legacy install kept this backup beside the HAProxy config. New installs
-# use the private state directory instead and restore it below.
-if [ "$HAS_STATE_HELPER" -eq 0 ]; then
-    if [ -f /etc/haproxy/haproxy.cfg.bak-ragnar ]; then
-        mv /etc/haproxy/haproxy.cfg.bak-ragnar /etc/haproxy/haproxy.cfg
-    elif [ -d /etc/haproxy ]; then
-        cat > /etc/haproxy/haproxy.cfg <<'CFG'
-global
-    log /dev/log local0
-    maxconn 2048
-    daemon
-defaults
-    log global
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-CFG
-    fi
+    remove_cloudflared_service || die "Cannot remove cloudflared tunnel service; state retained."
 fi
 
 # Remove only firewall rules carrying Ragnar's ownership comments. Untagged
@@ -117,14 +107,15 @@ delete_rule iptables nat PREROUTING ! -d 127.0.0.0/8 -p udp --dport 53 \
 delete_rule ip6tables nat PREROUTING ! -d ::1/128 -p udp --dport 53 \
     -m comment --comment ragnar-slowdns -j REDIRECT --to-ports 5300
 # udp-custom (stopped above) inserts these untagged rules itself on every start.
-delete_rule iptables filter INPUT -p udp --dport 36712 -j ACCEPT
-if command -v iptables >/dev/null 2>&1; then
-    iptables -t nat -S PREROUTING 2>/dev/null \
-        | grep -E -- '-p udp -m udp --dport 1:65535 -j DNAT --to-destination :36712$' \
-        | while read -ra rule; do
-            rule[0]=-D
-            iptables -t nat "${rule[@]}" 2>/dev/null || true
-        done
+if registered /etc/systemd/system/udp-custom.service && [ -f "$STATE_DIR/udp-custom-before" ]; then
+    current=$(ragnar_udp_custom_rules) || die "Cannot read UDP Custom firewall rules; state retained."
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        grep -Fqx -- "$line" "$STATE_DIR/udp-custom-before" && continue
+        read -ra rule <<< "$line"
+        table=filter; [ "${rule[1]}" != PREROUTING ] || table=nat
+        iptables -t "$table" -D "${rule[@]:1}" || die "Cannot remove UDP Custom rule; state retained."
+    done <<< "$current"
 fi
 
 # Remove UFW allowances only when the installer recorded that it added them.
@@ -136,190 +127,195 @@ fi
 # Persist the live post-cleanup ruleset so administrator changes made while
 # Ragnar was installed are retained. If the helper fails, fall back to the
 # family-specific save commands; only then fall back to the original snapshot.
-SAVE_V4=0
-SAVE_V6=0
-if command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1; then
-    SAVE_V4=1
-    SAVE_V6=1
+keep_live=()
+save_rules() {
+    local dest="$1" tmp
+    tmp=$(mktemp -- "$(dirname "$dest")/.ragnar-rules.XXXXXX") || return 1
+    if "$2" > "$tmp" && mv -fT -- "$tmp" "$dest"; then
+        keep_live+=("$dest")
+    else
+        rm -f -- "$tmp"
+    fi
+}
+if registered /etc/iptables/rules.v4 && registered /etc/iptables/rules.v6 && \
+   command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1; then
+    keep_live+=(/etc/iptables/rules.v4 /etc/iptables/rules.v6)
 else
-    mkdir -p /etc/iptables
-    if command -v iptables-save >/dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4; then
-        SAVE_V4=1
+    if registered /etc/iptables/rules.v4 && command -v iptables-save >/dev/null; then
+        mkdir -p /etc/iptables && save_rules /etc/iptables/rules.v4 iptables-save
     fi
-    if command -v ip6tables-save >/dev/null 2>&1 && ip6tables-save > /etc/iptables/rules.v6; then
-        SAVE_V6=1
+    if registered /etc/iptables/rules.v6 && command -v ip6tables-save >/dev/null; then
+        mkdir -p /etc/iptables && save_rules /etc/iptables/rules.v6 ip6tables-save
     fi
-fi
-if [ "$SAVE_V4" -eq 1 ]; then
-    rm -f "$STATE_DIR/registered/etc/iptables/rules.v4" "$STATE_DIR/original/etc/iptables/rules.v4"
-fi
-if [ "$SAVE_V6" -eq 1 ]; then
-    rm -f "$STATE_DIR/registered/etc/iptables/rules.v6" "$STATE_DIR/original/etc/iptables/rules.v6"
 fi
 
-# Remove exactly the additions made to the shared files by the old installer.
-if [ -r "$STATE_DIR/shells-added" ] && [ -f /etc/shells ]; then
-    python3 - "$STATE_DIR/shells-added" /etc/shells <<'PY'
+# Remove only recorded lines and complete, recognizable limits blocks. Stage
+# edits next to their destination so an I/O error cannot truncate a host file.
+python3 - "$STATE_DIR" <<'PY' || die "Shared-file cleanup failed; state retained."
 from collections import Counter
-import sys
-added = Counter(line.rstrip("\n") for line in open(sys.argv[1], encoding="utf-8"))
-path = sys.argv[2]
-with open(path, encoding="utf-8") as f:
-    lines = f.readlines()
-with open(path, "w", encoding="utf-8") as f:
-    for line in lines:
-        key = line.rstrip("\n")
-        if added[key]:
-            added[key] -= 1
-        else:
-            f.write(line)
-PY
-fi
-if [ -r "$STATE_DIR/hosts-added" ] && [ -f /etc/hosts ]; then
-    python3 - "$STATE_DIR/hosts-added" /etc/hosts <<'PY'
-from collections import Counter
-import sys
-added = Counter(line.rstrip("\n") for line in open(sys.argv[1], encoding="utf-8"))
-path = sys.argv[2]
-with open(path, encoding="utf-8") as f:
-    lines = f.readlines()
-with open(path, "w", encoding="utf-8") as f:
-    for line in lines:
-        key = line.rstrip("\n")
-        if added[key]:
-            added[key] -= 1
-        else:
-            f.write(line)
-PY
-fi
-python3 - <<'PY'
 from pathlib import Path
-p = Path('/etc/security/limits.conf')
-if p.exists():
-    lines = p.read_text().splitlines(keepends=True)
-    out, i = [], 0
-    while i < len(lines):
-        if lines[i].strip() == '# BEGIN Ragnar panel limits':
-            i += 1
-            while i < len(lines) and lines[i].strip() != '# END Ragnar panel limits':
-                i += 1
-            if i < len(lines):
-                i += 1
-            continue
-        if (lines[i].strip() == '# ragnar' and
-            [x.strip() for x in lines[i + 1:i + 5]] == [
-                '* soft nofile 1048576', '* hard nofile 1048576',
-                'root soft nofile 1048576', 'root hard nofile 1048576']):
-            i += 5
-            continue
-        out.append(lines[i])
-        i += 1
-    p.write_text(''.join(out))
-PY
+from tempfile import TemporaryDirectory
+import os
+import subprocess
+import sys
 
-# Compatibility cleanup for legacy installs; shared SlowDNS data in
-# /etc/vps-panel/slowdns is deliberately retained for the sister panel.
-rm -f /etc/sysctl.d/99-ragnar-tuning.conf /etc/ssh/sshd_config.d/60-ragnar.conf
-rm -f /usr/local/bin/menu /usr/local/bin/ragnar /usr/local/bin/zivpn \
-      /usr/local/bin/udp-custom /usr/local/bin/badvpn-udpgw /usr/local/bin/udpgw
+def replace_lines(path, old, new):
+    if old == new:
+        return
+    target = path.resolve(strict=True)
+    with TemporaryDirectory(dir=target.parent, prefix=".ragnar-restore.") as tmp:
+        staged = Path(tmp) / "file"
+        subprocess.run(["cp", "-a", "--", target, staged], check=True)
+        staged.write_bytes(b"".join(new))
+        os.replace(staged, target)
+
+for name in ("hosts", "shells"):
+    record = Path(sys.argv[1]) / (name + "-added")
+    path = Path("/etc") / name
+    if not record.is_file() or not path.is_file():
+        continue
+    added = Counter(record.read_bytes().splitlines())
+    old = path.read_bytes().splitlines(keepends=True)
+    new = []
+    for line in old:
+        key = line.rstrip(b"\r\n")
+        if added[key]:
+            added[key] -= 1
+        else:
+            new.append(line)
+    replace_lines(path, old, new)
+    record.unlink()  # Do not remove another occurrence on retry.
+
+path = Path("/etc/security/limits.conf")
+if path.is_file():
+    limits = [b"* soft nofile 1048576", b"* hard nofile 1048576",
+              b"root soft nofile 1048576", b"root hard nofile 1048576"]
+    blocks = ([b"# ragnar", *limits],
+              [b"# BEGIN Ragnar panel limits", *limits, b"# END Ragnar panel limits"])
+    old = path.read_bytes().splitlines(keepends=True)
+    keys = [line.strip() for line in old]
+    new, i = [], 0
+    while i < len(old):
+        for block in blocks:
+            if keys[i:i+len(block)] == block:
+                i += len(block)
+                break
+        else:
+            new.append(old[i])
+            i += 1
+    replace_lines(path, old, new)
+PY
 
 if [ -f "$BASE/db/ssh.json" ]; then
     echo "Panel SSH users:"
-    python3 -c "import json;print('\n'.join(json.load(open('$BASE/db/ssh.json'))['users']))" 2>/dev/null
+    users=$(python3 - "$BASE/db/ssh.json" <<'PY'
+import json, re, sys
+with open(sys.argv[1]) as f:
+    users = json.load(f)['users']
+if not isinstance(users, dict) or not all(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,31}', u) for u in users):
+    sys.exit("Invalid SSH account database")
+print('\n'.join(users))
+PY
+    ) || die "Cannot read SSH accounts; panel data retained."
+    printf '%s\n' "$users"
     b=""
     read -rp "Delete these Linux accounts too? [y/N] " b || true
     if [ "$b" = y ]; then
         # userdel refuses accounts with live sessions, so end them first.
-        python3 -c "import json;print('\n'.join(json.load(open('$BASE/db/ssh.json'))['users']))" \
-            | while IFS= read -r u; do
-                # Match the exact account name: id/pkill read a numeric name
-                # such as "0" as a UID, and system accounts are never panel users.
-                uid=$(awk -F: -v n="$u" '$1 == n { print $3 }' /etc/passwd)
-                [ -n "$u" ] && [ -n "$uid" ] && [ "$uid" -ge 1000 ] || continue
+        local_uid() {
+            # Force string comparison even when both names look numeric.
+            awk -F: -v n="$1" '"u:" $1 == "u:" n { print $3 }' /etc/passwd
+        }
+        while IFS= read -r u; do
+            uid=$(local_uid "$u")
+            [ -n "$u" ] && [ -n "$uid" ] && [ "$uid" -ge 1000 ] && [ "$uid" != 65534 ] || continue
+            for _ in 1 2 3 4 5; do
+                [ "$(local_uid "$u")" = "$uid" ] || break
                 pkill -KILL -U "$uid" 2>/dev/null || true
-                for _ in 1 2 3 4 5; do
-                    userdel -r -- "$u" 2>/dev/null && break
-                    awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd || break
-                    sleep 1
-                    pkill -KILL -U "$uid" 2>/dev/null || true
-                done
-                if awk -F: -v n="$u" '$1 == n { f = 1 } END { exit !f }' /etc/passwd; then
-                    echo "Warning: could not delete Linux account $u; remove it with: userdel -r $u"
-                fi
+                userdel -r -- "$u" 2>/dev/null && break
+                sleep 1
             done
+            [ -z "$(local_uid "$u")" ] || die "Could not delete Linux account $u; panel data retained."
+        done <<< "$users"
     fi
 fi
 
-if [ "$HAS_STATE_HELPER" -eq 1 ]; then
-    ragnar_restore_files || echo "Warning: some original files could not be restored; see messages above."
-else
-    rm -f /etc/systemd/system/haproxy.service.d/10-ragnar.conf
+if sister_panel_present; then
+    # Restore pre-existing SlowDNS files; don't delete a shared key or binary
+    # just because the other panel started using it after this installation.
+    for path in /usr/local/bin/dnstt-server /etc/vps-panel/slowdns/{server.key,server.pub,.turbo_kcp_patched,nameserver,mtu,dns_resolver,target_port}; do
+        if [ ! -s "$STATE_DIR/registered$path" ] && [ ! -e "$STATE_DIR/original$path" ] && [ ! -L "$STATE_DIR/original$path" ]; then
+            keep_live+=("$path")
+        fi
+    done
 fi
+ragnar_restore_files "${keep_live[@]}" || die "Could not restore all files. Backups kept at $STATE_DIR; correct the error and retry."
 rmdir /etc/systemd/system/haproxy.service.d 2>/dev/null || true
 
 # Remove upstream components only when this installer downloaded them.
-if [ "$HAS_STATE_HELPER" -eq 1 ] && ! sister_panel_present; then
+if ! sister_panel_present; then
     if installed_by_ragnar xray; then
         systemctl disable --now xray 2>/dev/null || true
         rm -rf /usr/local/bin/xray /usr/local/share/xray /usr/local/etc/xray /var/log/xray \
                /etc/systemd/system/xray.service /etc/systemd/system/xray@.service \
                /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d \
-               /etc/logrotate.d/xray
+               /etc/logrotate.d/xray || die "Cannot remove Xray; state retained."
     fi
     if installed_by_ragnar sing-box; then
         systemctl disable --now sing-box 2>/dev/null || true
         if dpkg -s sing-box >/dev/null 2>&1; then
-            dpkg --purge sing-box >/dev/null 2>&1 || echo "Warning: could not remove the sing-box package."
+            dpkg --purge sing-box || die "Cannot purge sing-box; state retained."
         fi
         # The package creates this service account but its purge keeps it.
-        if getent passwd sing-box >/dev/null 2>&1; then
-            userdel sing-box 2>/dev/null || true
+        if installed_by_ragnar sing-box-user && getent passwd sing-box >/dev/null 2>&1; then
+            userdel sing-box || die "Cannot remove sing-box user; state retained."
         fi
-        if getent group sing-box >/dev/null 2>&1; then
-            groupdel sing-box 2>/dev/null || true
+        if installed_by_ragnar sing-box-group && getent group sing-box >/dev/null 2>&1; then
+            groupdel sing-box || die "Cannot remove sing-box group; state retained."
         fi
     fi
     if installed_by_ragnar cloudflared && dpkg -s cloudflared >/dev/null 2>&1; then
-        # A tunnel service left behind would only crash-loop without its binary.
-        remove_cloudflared_service
-        dpkg --purge cloudflared >/dev/null 2>&1 || echo "Warning: could not remove the cloudflared package."
-        rmdir /etc/cloudflared 2>/dev/null || true
+        # Installing the binary does not establish ownership of a tunnel
+        # configured separately by the administrator.
+        if [ -e /etc/systemd/system/cloudflared.service ] || [ -L /etc/systemd/system/cloudflared.service ]; then
+            echo "Leaving cloudflared installed for the remaining tunnel service."
+        else
+            dpkg --purge cloudflared || die "Cannot purge cloudflared; state retained."
+            rmdir /etc/cloudflared 2>/dev/null || true
+        fi
     fi
     if installed_by_ragnar go-1.22; then
-        rm -rf /usr/local/go-1.22
+        rm -rf /usr/local/go-1.22 || die "Cannot remove Go toolchain; state retained."
     fi
 fi
 
 # Units removed above may still be linked from *.wants directories.
-for u in $RAGNAR_UNITS cloudflared cloudflared-update; do
-    for link in /etc/systemd/system/*.wants/"$u".service /etc/systemd/system/*.wants/"$u".timer; do
+for unit in "${managed_units[@]}"; do
+    for link in /etc/systemd/system/*.wants/"$unit"; do
         [ -L "$link" ] && [ ! -e "$link" ] && rm -f "$link"
     done
 done
-systemctl daemon-reload
-for u in $RAGNAR_UNITS; do
-    systemctl reset-failed "$u.service" "$u.timer" 2>/dev/null || true
+systemctl daemon-reload || die "Cannot reload systemd; state retained."
+for unit in "${managed_units[@]}"; do
+    systemctl reset-failed "$unit" 2>/dev/null || true
 done
 
 if command -v sshd >/dev/null 2>&1 && sshd -t 2>/dev/null; then
     systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi
 sysctl --system >/dev/null 2>&1 || true
-if [ "$HAS_STATE_HELPER" -eq 1 ]; then
-    for svc in haproxy dropbear vnstat masterdnsvpn netfilter-persistent xray sing-box zivpn udp-custom badvpn-udpgw udpgw \
-               slowdns ragnar-wsproxy ragnar-landing ragnar-check.timer \
-               ragnar-watchdog.timer ragnar-web; do
-        ragnar_restore_service_state "$svc" || true
-    done
-else
-    systemctl disable --now dropbear 2>/dev/null || true
-    if [ -f /etc/haproxy/haproxy.cfg ]; then
-        systemctl enable --now haproxy 2>/dev/null || true
-    fi
-fi
+restore_failed=0
+for unit in haproxy dropbear vnstat masterdnsvpn netfilter-persistent "${managed_units[@]}"; do
+    svc=${unit%.service}
+    [ -f "$STATE_DIR/services/$svc" ] || continue
+    ragnar_restore_service_state "$svc" || { echo "Could not restore $svc" >&2; restore_failed=1; }
+done
+[ "$restore_failed" = 0 ] || die "Service restoration incomplete. Backups kept at $STATE_DIR; correct the error and retry."
 
-rm -rf "$BASE"
-[ "$HAS_STATE_HELPER" -eq 0 ] || rm -rf "$STATE_DIR"
+rm -rf -- "$BASE" || die "Cannot remove panel files; backups kept at $STATE_DIR."
+rm -rf -- "$STATE_DIR"/{registered,original,services,installed} || die "Cannot remove installer records."
+rm -f -- "$STATE_DIR"/{nat-interface,udp-custom-before,ufw-added,shells-added,hosts-added} || die "Cannot remove installer records."
+rmdir -- "$STATE_DIR" 2>/dev/null || echo "Additional files left in $STATE_DIR."
 rm -rf /tmp/ragnar-update.* /tmp/ragnar-update-self.*.sh
 rm -f /tmp/ragnar-certbot.log /tmp/ragnar-slowdns-build.log /var/lock/ragnar-update.lock
 rmdir /etc/vps-panel/slowdns /etc/vps-panel 2>/dev/null || true

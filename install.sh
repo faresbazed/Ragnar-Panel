@@ -24,8 +24,8 @@ ragnar_state_init || die "Cannot create installer state directory"
 # Snapshot service state before apt can start newly installed daemons. On a
 # reinstall, the first-install snapshot is retained rather than overwritten.
 for svc in haproxy dropbear vnstat netfilter-persistent masterdnsvpn xray sing-box zivpn udp-custom badvpn-udpgw udpgw \
-           slowdns ragnar-wsproxy ragnar-landing ragnar-check.timer \
-           ragnar-watchdog.timer ragnar-web; do
+           slowdns ragnar-wsproxy ragnar-landing ragnar-check ragnar-check.timer \
+           ragnar-watchdog ragnar-watchdog.timer ragnar-web; do
     ragnar_capture_service_state "$svc" || warn "Could not record prior state for $svc"
 done
 # iptables-persistent saves the whole host ruleset; keep the existing saved
@@ -179,6 +179,7 @@ fetch_bin() {
 # Re-installing over a live panel: stop the services whose binaries are
 # about to be replaced (all units are restarted at the end).
 if [ "$IS_UPDATE" = 0 ]; then
+    ragnar_capture_udp_custom_rules || warn "Could not record which untagged UDP Custom rules pre-existed; uninstall will leave them alone"
     for u in zivpn udp-custom badvpn-udpgw udpgw slowdns xray sing-box ragnar-wsproxy; do
         systemctl stop "$u" 2>/dev/null || true
     done
@@ -373,10 +374,10 @@ systemctl restart haproxy
 if ! command -v xray >/dev/null; then
     # Uninstall deletes the upstream Xray paths, so only claim a clean install.
     xray_fresh=1
-    for p in /usr/local/etc/xray /usr/local/share/xray /var/log/xray \
+    for p in /usr/local/bin/xray /etc/logrotate.d/xray /usr/local/etc/xray /usr/local/share/xray /var/log/xray \
              /etc/systemd/system/xray.service /etc/systemd/system/xray@.service \
              /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d; do
-        [ -e "$p" ] && xray_fresh=0
+        { [ -e "$p" ] || [ -L "$p" ]; } && xray_fresh=0
     done
     if bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; then
         [ "$xray_fresh" = 0 ] || ragnar_mark_installed xray || warn "Could not record the Xray install for uninstall"
@@ -396,8 +397,16 @@ rm -f /etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf
 rmdir /etc/systemd/system/xray.service.d 2>/dev/null || true
 mkdir -p /usr/local/etc/xray
 if ! command -v sing-box >/dev/null; then
+    sing_user_existed=0; getent passwd sing-box >/dev/null && sing_user_existed=1
+    sing_group_existed=0; getent group sing-box >/dev/null && sing_group_existed=1
     if bash -c "$(curl -fsSL https://sing-box.app/install.sh)"; then
         ragnar_mark_installed sing-box || warn "Could not record the sing-box install for uninstall"
+        if [ "$sing_user_existed" = 0 ] && getent passwd sing-box >/dev/null; then
+            ragnar_mark_installed sing-box-user || warn "Could not record the sing-box user"
+        fi
+        if [ "$sing_group_existed" = 0 ] && getent group sing-box >/dev/null; then
+            ragnar_mark_installed sing-box-group || warn "Could not record the sing-box group"
+        fi
     else
         warn "sing-box install failed - AnyTLS will stay offline until it is installed"
     fi
@@ -673,8 +682,9 @@ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
     for p in 22/tcp 80/tcp 443/tcp 109/tcp 143/tcp 53 53/udp 53/tcp 5667/udp \
              36712/udp 6000:19999/udp 20000:65535/udp 8446/tcp 2053/tcp; do
         if ! ufw status 2>/dev/null | awk -v spec="$p" '$1 == spec {found=1} END {exit !found}'; then
-            printf '%s\n' "$p" >> "$RAGNAR_STATE_DIR/ufw-added"
-            ufw allow "$p" >/dev/null 2>&1 || true
+            if ufw allow "$p" >/dev/null 2>&1; then
+                printf '%s\n' "$p" >> "$RAGNAR_STATE_DIR/ufw-added"
+            fi
         fi
     done
 fi
