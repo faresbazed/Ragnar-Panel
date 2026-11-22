@@ -196,6 +196,9 @@ conntrack headroom, `LimitNOFILE` everywhere.
   after DNSTT forwards them into the SSH backend
 
 ### Web panel (3x-ui style)
+- Choose a color theme in the sign-in card or panel header: Dark (default),
+  Light, Orchid, Evergreen, Cobalt, or Parchment. The choice is saved in
+  this browser and does not change the terminal's appearance.
 - `https://<your-domain>/panel` — username/password login (PBKDF2,
   lockout after failed attempts), served with the panel's own domain
   certificate by `ragnar-web.service`

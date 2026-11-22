@@ -129,7 +129,11 @@ for i, name in enumerate(("O'Brien", "x');alert(1);//", 'quotes"<&>\\\\end')):
         dash = op.open(BASE_URL + "/").read().decode()
         self.assertIn("Dashboard", dash)
         self.assertIn('class="topbar"', dash)
-        self.assertIn('id="theme-toggle"', dash)
+        for view in (page, dash):
+            picker = re.search(r'<select\b[^>]*aria-label="Color theme"[^>]*>(.*?)</select>', view, re.S)
+            self.assertIsNotNone(picker)
+            self.assertEqual(re.findall(r'<option value="([^"]+)">', picker.group(1)),
+                             ["dark", "light", "orchid", "evergreen", "cobalt", "parchment"])
         self.assertIn('class="node-strip"', dash)
         self.assertIn('class="nav-icon"', dash)
         self.assertIn('aria-current="page"', dash)
