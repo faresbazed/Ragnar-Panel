@@ -1305,7 +1305,7 @@ input:focus, select:focus {
   margin: 14px 0 6px;
 }
 .login-card input { width: 100%; padding: 10px 12px; }
-.login-card .btn { width: 100%; padding: 11px; margin-top: 22px; font-size: 14px; }
+.login-card .btn[type="submit"] { width: 100%; padding: 11px; margin-top: 22px; font-size: 14px; }
 
 .skip-link {
   position: fixed;
