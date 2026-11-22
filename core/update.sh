@@ -5,9 +5,8 @@
 #
 # Downloads the latest code from GitHub (main branch), backs up the
 # whole panel state (/etc/ragnar: users, settings, certs, SlowDNS
-# keys), then re-runs the installer from the fresh copy. The installer
-# preserves users, settings, keys and certificates, so an update never
-# wipes the panel - it only replaces code and restarts services.
+# keys), then re-runs the installer from the fresh copy. A failed install
+# keeps the previous version marker and reports the recovery archive.
 #
 # Usage:
 #   update.sh           perform the update (skips if already latest)
@@ -32,10 +31,12 @@ LOCK="/var/lock/ragnar-update.lock"
 # When running from the installed copy, re-exec from a temp copy first.
 case "$0" in
     "$BASE"/*)
-        if [ -z "${RAGNAR_UPDATE_COPY:-}" ]; then
-            _tmp="$(mktemp /tmp/ragnar-update-self.XXXXXX.sh)"
-            cp "$0" "$_tmp" && chmod 755 "$_tmp"
-            RAGNAR_UPDATE_COPY=1 exec bash "$_tmp" "$@"
+        if [ "${1:-}" != check ] && [ -z "${RAGNAR_UPDATE_COPY:-}" ]; then
+            _tmp="$(mktemp /tmp/ragnar-update-self.XXXXXX.sh)" || exit 1
+            trap 'rm -f "$_tmp"' EXIT
+            cp "$0" "$_tmp" || exit 1
+            RAGNAR_UPDATE_COPY=1 bash "$_tmp" "$@"
+            exit $?
         fi
         ;;
 esac
@@ -44,7 +45,9 @@ say() { echo -e "\033[96m[UPDATE]\033[0m $*"; }
 err() { echo -e "\033[91m[UPDATE] $*\033[0m" >&2; }
 
 write_status() {  # write_status <state> <version> <message>
-    python3 - "$STATUS" "$1" "$2" "$3" <<'PY' 2>/dev/null || true
+    local tmp
+    tmp=$(mktemp "$BASE/.update-status.XXXXXX") || exit 1
+    if python3 - "$tmp" "$1" "$2" "$3" <<'PY'
 import json, sys, datetime
 data = {"state": sys.argv[2], "version": sys.argv[3],
         "message": sys.argv[4],
@@ -52,6 +55,12 @@ data = {"state": sys.argv[2], "version": sys.argv[3],
 with open(sys.argv[1], "w") as f:
     json.dump(data, f, indent=1)
 PY
+    then
+        mv -fT "$tmp" "$STATUS" && return
+    fi
+    rm -f "$tmp"
+    err "Cannot write update status to $STATUS"
+    exit 1
 }
 
 current_sha() {
@@ -68,7 +77,7 @@ latest_sha() {
             "https://api.github.com/repos/$REPO/commits/main?t=$(date +%s)" 2>/dev/null \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' 2>/dev/null || echo "")"
     fi
-    echo "$sha"
+    if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then echo "$sha"; fi
 }
 
 short() { [ -n "$1" ] && echo "${1:0:7}" || echo "unknown"; }
@@ -89,15 +98,16 @@ fi
 
 # ---------------------------------------------------------------------
 [ "$(id -u)" = 0 ] || { err "Run as root."; exit 1; }
-mkdir -p "$BASE" /var/lock
-exec 9>"$LOCK"
+[ "$BASE" = /etc/ragnar ] || { err "The installer only supports /etc/ragnar; refusing to back up a different directory."; exit 1; }
+mkdir -p "$BASE" /var/lock || exit 1
+exec 9>"$LOCK" || exit 1
 if ! flock -n 9; then
     err "An update is already running."
-    write_status "running" "$(current_sha)" "An update is already running."
     exit 1
 fi
 
 FORCE=0; [ "${1:-}" = "--force" ] && FORCE=1
+touch "$LOG" && chmod 600 "$LOG" || exit 1
 {
     echo "===== update run $(date -Is) ====="
 } >> "$LOG"
@@ -105,79 +115,65 @@ FORCE=0; [ "${1:-}" = "--force" ] && FORCE=1
 cur="$(current_sha)"
 write_status "running" "$cur" "Checking GitHub for the latest version..."
 lat="$(latest_sha)"
-if [ -z "$lat" ] && [ "$FORCE" = 0 ]; then
+if [ -z "$lat" ]; then
     err "Could not reach GitHub - update aborted, nothing changed."
     write_status "failed" "$cur" "Could not reach GitHub; nothing changed."
     exit 1
 fi
-say "Installed: $(short "$cur")   Latest: $(short "${lat:-main}")"
-if [ "$FORCE" = 0 ] && [ -n "$cur" ] && [ -n "$lat" ] && [ "$cur" = "$lat" ]; then
+say "Installed: $(short "$cur")   Latest: $(short "$lat")"
+if [ "$FORCE" = 0 ] && [ "$cur" = "$lat" ]; then
     say "Already up to date - nothing to do (pass --force to reinstall files)."
     write_status "uptodate" "$cur" "Already up to date."
     exit 0
 fi
 
-WORK="$(mktemp -d /tmp/ragnar-update.XXXXXX)"
+WORK="$(mktemp -d /tmp/ragnar-update.XXXXXX)" || { write_status "failed" "$cur" "Cannot create download directory."; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 
-TAR_REF="${lat:-refs/heads/main}"
 say "Downloading the latest panel code..."
 if ! curl -fsSL --max-time 300 -H "Cache-Control: no-cache" \
-        "https://codeload.github.com/$REPO/tar.gz/$TAR_REF" -o "$WORK/src.tgz" \
+        "https://codeload.github.com/$REPO/tar.gz/$lat" -o "$WORK/src.tgz" \
         >> "$LOG" 2>&1; then
     err "Download failed - update aborted, nothing changed."
     write_status "failed" "$cur" "Download failed; nothing changed."
     exit 1
 fi
-tar -xzf "$WORK/src.tgz" -C "$WORK"
-SRC_DIR="$(dirname "$(find "$WORK" -maxdepth 2 -name install.sh | head -1)")"
-if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/install.sh" ]; then
+if ! tar -xzf "$WORK/src.tgz" -C "$WORK" >> "$LOG" 2>&1; then
+    write_status "failed" "$cur" "Archive extraction failed; nothing changed."
+    exit 1
+fi
+installers=("$WORK"/*/install.sh)
+if [ "${#installers[@]}" != 1 ] || [ ! -f "${installers[0]}" ]; then
     err "Downloaded archive looks wrong - update aborted, nothing changed."
     write_status "failed" "$cur" "Bad download; nothing changed."
     exit 1
 fi
+SRC_DIR=${installers[0]%/install.sh}
 
-BACKUP="/root/ragnar-backup-pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+BACKUP=$(mktemp "/root/ragnar-backup-pre-update-$(date +%Y%m%d-%H%M%S)-XXXXXX.tar.gz") || {
+    write_status "failed" "$cur" "Cannot create backup; nothing changed."
+    exit 1
+}
 say "Backing up panel state to $BACKUP ..."
-if ! tar -czf "$BACKUP" -C "$(dirname "$BASE")" "$(basename "$BASE")" \
-        >> "$LOG" 2>&1; then
+# Enter the data directory even if /etc/ragnar itself is a symlink. Keep
+# the historical ragnar/ archive prefix without following interior symlinks.
+backup_cmd=(tar -czf "$BACKUP" -C "$BASE" '--transform=flags=rh;s|^\.|ragnar|' .)
+# Don't archive different halves of an in-flight panel account transaction.
+if [ -d "$BASE/db" ]; then
+    backup_cmd=(flock -x -w 60 "$BASE/db/accounts.lock" "${backup_cmd[@]}")
+fi
+if ! "${backup_cmd[@]}" >> "$LOG" 2>&1; then
     err "Backup failed - update aborted, nothing changed."
+    rm -f -- "$BACKUP"
     write_status "failed" "$cur" "Backup failed; nothing changed."
     exit 1
 fi
 
-# Directly replace all core, CLI, and Web Panel files up front so they are
-# guaranteed to match the downloaded release on disk immediately.
-mkdir -p "$BASE"/{core,web}
-rm -rf "$BASE/core/__pycache__" "$BASE/web/__pycache__"
-for f in ragnar.py checker.py wsproxy.py install-state.sh watchdog.sh slowdns-setup.sh update.sh; do
-    [ -f "$SRC_DIR/core/$f" ] && install -m 755 "$SRC_DIR/core/$f" "$BASE/core/$f"
-done
-[ -f "$SRC_DIR/menu.sh" ]       && install -m 755 "$SRC_DIR/menu.sh" "$BASE/menu.sh"
-[ -f "$SRC_DIR/uninstall.sh" ]  && install -m 755 "$SRC_DIR/uninstall.sh" "$BASE/uninstall.sh"
-[ -f "$SRC_DIR/web/webpanel.py" ] && install -m 755 "$SRC_DIR/web/webpanel.py" "$BASE/web/webpanel.py"
-rm -f /usr/local/bin/menu /usr/local/bin/ragnar
-ln -s "$BASE/menu.sh" /usr/local/bin/menu
-ln -s "$BASE/menu.sh" /usr/local/bin/ragnar
-
-# Feed the installer the saved domain/NS so it never prompts.
-eval "$(python3 - "$BASE/settings.json" <<'PY' 2>/dev/null
-import json, shlex, sys
-try:
-    s = json.load(open(sys.argv[1]))
-except Exception:
-    s = {}
-for key, var in (("domain", "RAGNAR_DOMAIN"), ("ns", "RAGNAR_NS")):
-    val = (s.get(key) or "").strip()
-    if val:
-        print(f"export {var}={shlex.quote(val)}")
-PY
-)"
-
-REC_VER="${lat:-$(date +%Y%m%d%H%M%S)}"
+# The installer alone validates state, snapshots command links and deploys code.
+REC_VER="$lat"
 say "Installing the new version (users, keys and settings are kept)..."
-write_status "running" "$REC_VER" "Installing version $(short "$REC_VER")..."
-( cd "$SRC_DIR" && RAGNAR_UPDATE=1 bash install.sh ) 2>&1 | tee -a "$LOG"
+write_status "running" "$cur" "Installing version $(short "$REC_VER")..."
+( cd "$SRC_DIR" && unset RAGNAR_DOMAIN RAGNAR_NS && RAGNAR_UPDATE=1 bash install.sh ) 2>&1 | tee -a "$LOG"
 rc="${PIPESTATUS[0]}"
 if [ "$rc" != 0 ]; then
     err "Installer failed (exit $rc) - see $LOG"
@@ -187,7 +183,13 @@ if [ "$rc" != 0 ]; then
     exit "$rc"
 fi
 
-printf '%s %s\n' "$REC_VER" "$(date -Is)" > "$VERSION_FILE"
+if ! { ver_tmp=$(mktemp "$BASE/.version.XXXXXX") &&
+       printf '%s %s\n' "$REC_VER" "$(date -Is)" > "$ver_tmp" &&
+       mv -fT "$ver_tmp" "$VERSION_FILE"; }; then
+    [ -z "$ver_tmp" ] || rm -f -- "$ver_tmp"
+    write_status "failed" "$cur" "Cannot record installed version. Backup: $BACKUP"
+    exit 1
+fi
 write_status "done" "$REC_VER" "Updated to $(short "$REC_VER"). Backup: $BACKUP"
 systemctl restart ragnar-web 2>/dev/null || true
 say "Panel updated to version $(short "$REC_VER")."

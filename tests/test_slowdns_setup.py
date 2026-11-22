@@ -45,6 +45,8 @@ class SlowDNSSetupTests(unittest.TestCase):
             ip.chmod(0o755)
             source = Path(os.environ.get("SLOWDNS_SETUP_SCRIPT", ROOT / "core/slowdns-setup.sh"))
             script = tmp / "slowdns-setup.sh"
+            for helper in ("panel-state.py", "ragnar.py"):
+                (tmp / helper).symlink_to(ROOT / "core" / helper)
             unit = tmp / "slowdns.service"
             # Isolate absolute host paths without changing the setup logic.
             script.write_text(source.read_text().replace(

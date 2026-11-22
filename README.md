@@ -65,14 +65,24 @@ The panel updates itself from GitHub — no re-clone needed:
 - **Terminal menu:** option **10 · UPDATE PANEL**
 - **Web panel:** Settings → **Update panel now**
 - **Script:** `sudo bash /etc/ragnar/core/update.sh`
-  (`check` prints installed vs latest, `--force` skips the version check)
+  (`check` only compares versions; `--force` reinstalls even if they match)
 
-An update downloads the latest `main`, backs up the whole panel state to
-`/root/ragnar-backup-pre-update-<date>.tar.gz`, then re-runs the installer.
-Users, settings, certificates and SlowDNS keys are preserved; only code is
-replaced and services are restarted. The installed version is recorded in
-`/etc/ragnar/version`, the last run in `/etc/ragnar/update-status.json`
-(full log: `/etc/ragnar/update.log`).
+An update downloads a specific `main` commit and backs up `/etc/ragnar` to a
+unique, root-only `/root/ragnar-backup-pre-update-<date>-<suffix>.tar.gz`
+before installing. Account databases, web credentials, settings and SlowDNS
+keys are kept. A valid renewed Let's Encrypt certificate takes precedence over
+the local pair. Damaged JSON or an incomplete key pair stops the upgrade
+rather than silently resetting accounts or generating a new identity.
+
+The updater records the new commit in `/etc/ragnar/version` only after the
+installer succeeds. On failure, check `/etc/ragnar/update-status.json` and
+`/etc/ragnar/update.log`, fix the reported problem and retry. A late failure
+can leave new code or host configuration in place; the archive is a panel
+state backup, not an automatic host rollback.
+
+When upgrading from a release that predates these checks, run
+`sudo bash core/update.sh --force` from a fresh checkout to use the new
+backup and validation flow on that first upgrade as well.
 
 ## The port-sharing solution
 

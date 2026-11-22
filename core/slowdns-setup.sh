@@ -71,29 +71,17 @@ print(default if v is None or v == "" else v)
 PY
 }
 
-store_settings() { # ns mtu resolver target - empty keeps the old value
-    python3 - "$SETTINGS" "$1" "$2" "$3" "$4" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-s = json.load(open(p)) if os.path.exists(p) else {}
-keys = ("ns", "slowdns_mtu", "slowdns_resolver", "slowdns_target")
-for key, val in zip(keys, sys.argv[2:]):
-    if val:
-        s[key] = val if key in ("ns", "slowdns_resolver") else int(val)
-json.dump(s, open(p, "w"), indent=2)
-PY
-}
-
 # Adopt the other panel's keypair if it exists and ours does not
 # (keeps the live SlowDNS identity across the integration).
 for f in server.key server.pub; do
     if [ ! -s "$SD_DIR/$f" ] && [ -s "$THEIR_DIR/$f" ]; then
-        cp "$THEIR_DIR/$f" "$SD_DIR/$f"
+        cp "$THEIR_DIR/$f" "$SD_DIR/$f" || exit 1
     fi
 done
 
 CF_TOKEN="${2:-}"
-store_settings "${1:-}" "${3:-}" "${4:-}" "${5:-}"
+state_helper="$(dirname "${BASH_SOURCE[0]}")/panel-state.py"
+RAGNAR_DIR="$BASE" python3 "$state_helper" slowdns-settings "${1:-}" "${3:-}" "${4:-}" "${5:-}" || exit 1
 NS=$(get_setting ns "")
 MTU=$(get_setting slowdns_mtu 1232)
 RESOLVER=$(get_setting slowdns_resolver 1.1.1.1)
@@ -195,23 +183,24 @@ if [ ! -s "$SD_DIR/server.key" ] || [ ! -s "$SD_DIR/server.pub" ]; then
     "$BIN" -gen-key -privkey-file "$SD_DIR/server.key" \
         -pubkey-file "$SD_DIR/server.pub" || {
         say "ERROR: key generation failed"; exit 1; }
-    chmod 600 "$SD_DIR/server.key"
 fi
-cp "$SD_DIR/server.key" "$SD_DIR/server.pub" "$THEIR_DIR/" 2>/dev/null || true
-chmod 600 "$THEIR_DIR/server.key" 2>/dev/null || true
+chmod 600 "$SD_DIR/server.key" || exit 1
+for f in server.key server.pub; do
+    if ! cmp -s "$SD_DIR/$f" "$THEIR_DIR/$f"; then
+        mirror=$(mktemp "$THEIR_DIR/.$f.XXXXXX") || exit 1
+        mode=644; [ "$f" != server.key ] || mode=600
+        if ! { install -m "$mode" "$SD_DIR/$f" "$mirror" && mv -fT "$mirror" "$THEIR_DIR/$f"; }; then
+            rm -f "$mirror"; exit 1
+        fi
+    fi
+done
+chmod 600 "$THEIR_DIR/server.key" || exit 1
 [ -f "$MARKER" ] && touch "$THEIR_DIR/.turbo_kcp_patched" || true
 printf '%s\n' "$NS" > "$THEIR_DIR/nameserver"
 printf '%s\n' "$MTU" > "$THEIR_DIR/mtu"
 printf '%s\n' "$RESOLVER" > "$THEIR_DIR/dns_resolver"
 printf '%s\n' "$TARGET" > "$THEIR_DIR/target_port"
-python3 - "$SETTINGS" "$SD_DIR/server.pub" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-s = json.load(open(p)) if os.path.exists(p) else {}
-s["slowdns_pubkey"] = open(sys.argv[2]).read().strip()
-s.pop("slowdns_kcp", None)
-json.dump(s, open(p, "w"), indent=2)
-PY
+RAGNAR_DIR="$BASE" python3 "$state_helper" slowdns-key "$SD_DIR/server.pub" || exit 1
 
 # ---------------------------------------------------------------------
 # 4. Optional automatic Cloudflare DNS provisioning (their section 4,
