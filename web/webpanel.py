@@ -345,18 +345,18 @@ ICONS = {
     "refresh": '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
     "check": '<path d="m5 12 5 5L20 7"/>',
     "alert": '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
-    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
-    "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    "palette": '<path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.5 1.5 0 0 1 1.1-2.6H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8Z"/><path d="M7.5 11h.01M10 7.5h.01M14.5 7.5h.01M17 11h.01" stroke-width="2.5"/>',
 }
 
-FONTS_HEAD = (
+THEMES = ("dark", "light", "orchid", "evergreen", "cobalt", "parchment")
+PAGE_HEAD = (
+    "<script>(function(){try{var t=localStorage.getItem('ragnar-theme');"
+    f"if({json.dumps(THEMES)}.includes(t))document.documentElement.setAttribute('data-theme',t);"
+    "}catch(e){}})();</script>"
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600'
     '&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">'
-    "<script>(function(){try{var t=localStorage.getItem('ragnar-theme');"
-    "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);"
-    "}catch(e){}})();</script>"
 )
 
 
@@ -368,6 +368,13 @@ def icon(name, cls="icon"):
         f'stroke-linejoin="round" aria-hidden="true" focusable="false">'
         f'{paths}</svg>'
     )
+
+
+def theme_picker():
+    options = "".join(f'<option value="{t}">{t.title()}</option>' for t in THEMES)
+    return (f'<span class="theme-picker">{icon("palette")}'
+            '<select id="theme-select" aria-label="Color theme" title="Color theme" '
+            f'onchange="setTheme(this.value)">{options}</select></span>')
 
 
 CSS = """
@@ -420,7 +427,7 @@ CSS = """
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
 }
 
-html[data-theme="light"] {
+html[data-theme="light"], html[data-theme="parchment"] {
   color-scheme: light;
   --bg: #f5f2ec;
   --bg-wash: rgba(198, 120, 20, 0.07);
@@ -460,6 +467,97 @@ html[data-theme="light"] {
 
   --shadow-sm: 0 2px 10px rgba(24, 18, 10, 0.05);
   --shadow: 0 14px 34px rgba(24, 18, 10, 0.07);
+}
+
+html[data-theme="orchid"] {
+  --bg: #1b1022;
+  --bg-wash: rgba(215, 166, 239, 0.12);
+  --topbar-bg: rgba(37, 23, 46, 0.93);
+  --surface: #2b1d34;
+  --surface-2: #35243f;
+  --surface-3: #463050;
+  --surface-inset: #211628;
+  --border: #48334f;
+  --border-strong: #70567d;
+  --text: #f6eafa;
+  --text-muted: #d4bfdc;
+  --text-dim: #b49fbf;
+  --accent: #d7a6ef;
+  --accent-hover: #e9c4fb;
+  --accent-ink: #28132f;
+  --accent-soft: rgba(215, 166, 239, 0.15);
+  --accent-text: #e8bcff;
+  --info-bg: var(--accent-soft);
+  --info-text: var(--accent-text);
+}
+
+html[data-theme="evergreen"] {
+  --bg: #0d1c17;
+  --bg-wash: rgba(166, 214, 171, 0.11);
+  --topbar-bg: rgba(18, 38, 31, 0.93);
+  --surface: #172b23;
+  --surface-2: #20372d;
+  --surface-3: #2c483a;
+  --surface-inset: #10221c;
+  --border: #334c3e;
+  --border-strong: #597664;
+  --text: #e5f3e8;
+  --text-muted: #c0d8c5;
+  --text-dim: #9cb5a3;
+  --accent: #a6d6ab;
+  --accent-hover: #c2e9be;
+  --accent-ink: #10291b;
+  --accent-soft: rgba(166, 214, 171, 0.14);
+  --accent-text: #b9e9be;
+  --info-bg: var(--accent-soft);
+  --info-text: var(--accent-text);
+}
+
+html[data-theme="cobalt"] {
+  --bg: #0b1730;
+  --bg-wash: rgba(115, 169, 255, 0.16);
+  --topbar-bg: rgba(17, 35, 70, 0.93);
+  --surface: #13264a;
+  --surface-2: #1a3159;
+  --surface-3: #25426f;
+  --surface-inset: #0e1e3d;
+  --border: #304972;
+  --border-strong: #53729e;
+  --text: #ecf3ff;
+  --text-muted: #c1d1ef;
+  --text-dim: #9fb5d8;
+  --accent: #73a9ff;
+  --accent-hover: #9cc3ff;
+  --accent-ink: #0b1a36;
+  --accent-soft: rgba(115, 169, 255, 0.17);
+  --accent-text: #a3c8ff;
+  --info-bg: var(--accent-soft);
+  --info-text: var(--accent-text);
+}
+
+html[data-theme="parchment"] {
+  --bg: #e8dcc3;
+  --bg-wash: rgba(145, 99, 53, 0.14);
+  --topbar-bg: rgba(244, 233, 209, 0.94);
+  --surface: #fff5df;
+  --surface-2: #f4e8cc;
+  --surface-3: #e7d8b9;
+  --surface-inset: #f9efd9;
+  --border: #d4c3a3;
+  --border-strong: #ab9473;
+  --text: #30281f;
+  --text-muted: #5c4d3a;
+  --text-dim: #6e5b40;
+  --accent: #65402e;
+  --accent-hover: #4a3024;
+  --accent-ink: #fff5df;
+  --accent-soft: rgba(101, 64, 46, 0.11);
+  --accent-text: #643923;
+  --info-bg: var(--accent-soft);
+  --info-text: var(--accent-text);
+  --ok-text: #245c32;
+  --warn-text: #824405;
+  --danger-text: #9b2821;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -589,26 +687,35 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
-.icon-btn {
-  display: inline-grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
+.theme-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.theme-picker svg {
+  position: absolute;
+  left: 11px;
+  width: 16px;
+  height: 16px;
+  color: var(--accent-text);
+  pointer-events: none;
+}
+.theme-picker select {
+  padding: 6px 8px 6px 32px;
   border-radius: 999px;
   background: var(--surface);
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.icon-btn:hover {
+.theme-picker select:hover {
   color: var(--text);
   border-color: var(--border-strong);
   background: var(--surface-2);
 }
-.icon-btn svg { width: 16px; height: 16px; }
-html[data-theme="light"] .theme-sun { display: none; }
-html:not([data-theme="light"]) .theme-moon { display: none; }
 
 .logout-link {
   display: inline-flex;
@@ -1003,7 +1110,7 @@ input:focus, select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.nav a:focus-visible, .btn:focus-visible, .filter-chip:focus-visible, .icon-btn:focus-visible {
+.nav a:focus-visible, .btn:focus-visible, .filter-chip:focus-visible, .theme-picker select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -1352,11 +1459,11 @@ input:focus, select:focus {
 """
 
 CLIENT_JS = """
-function toggleTheme() {
-  var root = document.documentElement;
-  var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-  root.setAttribute('data-theme', next);
-  try { localStorage.setItem('ragnar-theme', next); } catch (e) {}
+var themeSelect = document.getElementById('theme-select');
+if (themeSelect) themeSelect.value = document.documentElement.getAttribute('data-theme') || 'dark';
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem('ragnar-theme', theme); } catch (e) {}
 }
 function toggleLoginPw(btn) {
   var inp = document.getElementById('login-pass');
@@ -1510,15 +1617,14 @@ def layout(title, active, body, flash="", page_icon="server", extra_js=""):
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Ragnar VPS Management Panel - {esc(title)}">
-<title>{esc(title)} - Ragnar Panel</title>{FONTS_HEAD}<style>{CSS}</style></head>
+<title>{esc(title)} - Ragnar Panel</title>{PAGE_HEAD}<style>{CSS}</style></head>
 <body><a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar"><div class="topbar-inner">
 <a class="brand" href="{U('/')}"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
 <span class="brand-text"><span class="brand-name">RAGNAR</span><span class="brand-sub">VPS Console</span></span></a>
 <nav class="nav" aria-label="Primary navigation">{links}</nav>
 <div class="topbar-utils">
-<button class="icon-btn" id="theme-toggle" type="button" onclick="toggleTheme()" title="Switch theme" aria-label="Switch color theme">
-<span class="theme-sun">{icon("sun")}</span><span class="theme-moon">{icon("moon")}</span></button>
+{theme_picker()}
 <a class="logout-link" href="{U('/logout')}">{icon("logout", "nav-icon")}<span>Logout</span></a>
 </div></div></header>
 <main class="main" id="main"><div class="page-heading"><div>
@@ -1535,7 +1641,7 @@ def login_page(error=""):
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Sign in to Ragnar VPS Management Panel">
-<title>Login - Ragnar Panel</title>{FONTS_HEAD}<style>{CSS}</style></head>
+<title>Login - Ragnar Panel</title>{PAGE_HEAD}<style>{CSS}</style></head>
 <body><div class="login-shell"><div class="login-split">
 <div class="login-showcase"><div>
 <div class="showcase-head"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
@@ -1550,8 +1656,7 @@ def login_page(error=""):
 <div class="login-card">
 <div style="display:flex;justify-content:space-between;align-items:center">
 <h1>Sign in</h1>
-<button class="icon-btn" id="login-theme-toggle" type="button" onclick="toggleTheme()" title="Switch theme" aria-label="Switch color theme">
-<span class="theme-sun">{icon("sun")}</span><span class="theme-moon">{icon("moon")}</span></button>
+{theme_picker()}
 </div>
 <p class="login-sub">Enter your administrator credentials to continue.</p>{err}
 <form method="post" action="{U('/login')}">
