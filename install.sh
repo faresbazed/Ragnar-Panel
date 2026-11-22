@@ -28,7 +28,7 @@ else
     exec 9>"$LOCK" || die "Cannot open install lock"
     flock -n 9 || die "Another install or update is already running"
 fi
-code_files=(core/{ragnar.py,checker.py,wsproxy.py,install-state.sh,panel-state.py,watchdog.sh,slowdns-setup.sh,update.sh}
+code_files=(core/{ragnar.py,checker.py,wsproxy.py,install-state.sh,panel-state.py,watchdog.sh,slowdns-setup.sh,update.sh,terminal-theme.sh}
             menu.sh uninstall.sh web/webpanel.py)
 for file in "${code_files[@]}" core/cert-deploy.sh configs/{99-ragnar-tuning.conf,haproxy.cfg}; do
     [ -s "$SRC/$file" ] || die "Incomplete release: missing $file"

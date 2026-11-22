@@ -9,7 +9,11 @@ together **without the ports fighting each other**.
 [Terminal preview](docs/look.txt) — the dashboard shows host resources,
 transfer, accounts and service health above the numbered menus. On narrow
 terminals, values stack and optional hints give way to action labels.
-Use `NO_COLOR=1 menu` for unstyled output.
+Press **T · Appearance** to select Orchid, Evergreen, Cobalt or Parchment,
+or to restore the default terminal colors. The terminal saves your choice
+per user in `$XDG_CONFIG_HOME/ragnar/terminal-theme` (normally
+`~/.config/ragnar/terminal-theme`), independently of the web panel.
+Use `NO_COLOR=1 menu` for unstyled output without changing your preference.
 
 ## Install
 

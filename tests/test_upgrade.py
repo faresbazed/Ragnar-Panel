@@ -128,7 +128,8 @@ esac''')
         self.update("--force")
         self.assertEqual(self.status()["state"], "done")
         self.assertEqual((self.base / "version").read_text().split()[0], SHA)
-        self.assertEqual((self.base / "menu.sh").read_bytes(), (self.src / "menu.sh").read_bytes())
+        for code in ("menu.sh", "core/terminal-theme.sh"):
+            self.assertEqual((self.base / code).read_bytes(), (self.src / code).read_bytes())
         for name, data in self.saved.items():
             self.assertEqual((self.base / name).read_text(), data, name)
         self.assertEqual((self.base / "web.json").stat().st_mode & 0o777, 0o600)
