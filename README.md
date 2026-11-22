@@ -6,9 +6,10 @@ A complete VPS panel in the style of the classic SSH/Xray autoscripts —
 one menu that runs SSH, WebSocket, SSL, Xray, Cloudflare, UDP and SlowDNS
 together **without the ports fighting each other**.
 
-![look](docs/look.txt) — the menu mirrors the reference design: server
-specs / ISP / bandwidth / user stats / service status on top, main menu
-below, purple borders with cyan/green/yellow text.
+[Terminal preview](docs/look.txt) — the dashboard shows host resources,
+transfer, accounts and service health above the numbered menus. On narrow
+terminals, values stack and optional hints give way to action labels.
+Use `NO_COLOR=1 menu` for unstyled output.
 
 ## Install
 

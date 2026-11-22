@@ -11,82 +11,140 @@ CORE="${RAGNAR_CORE:-$RAGNAR_DIR/core/ragnar.py}"
 export RAGNAR_DIR
 
 # ---- terminal UI -----------------------------------------------------
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    P='\033[95m'; P2='\033[35m'; C='\033[96m'; G='\033[92m'; Y='\033[93m'
-    W='\033[97m'; R='\033[91m'; DIM='\033[90m'; N='\033[0m'; B='\033[1m'
-else
-    P=''; P2=''; C=''; G=''; Y=''; W=''; R=''; DIM=''; N=''; B=''
+C=''; B=''; DIM=''; G=''; Y=''; R=''; N=''; BADGE=''
+if [[ -t 1 && -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
+    C=$'\e[36m'; B=$'\e[1m'; DIM=$'\e[90m'; G=$'\e[32m'
+    Y=$'\e[33m'; R=$'\e[31m'; N=$'\e[0m'; BADGE=$'\e[7;36m'
 fi
 
 term_width() {
-    local width
-    width=$(tput cols 2>/dev/null || printf '80')
-    [[ "$width" =~ ^[0-9]+$ ]] || width=80
-    (( width < 44 )) && width=44
+    local width=${COLUMNS:-}
+    if [[ -t 2 || -z $width ]]; then width=$(tput cols 2>/dev/null); fi
+    [[ $width =~ ^[1-9][0-9]{0,3}$ ]] || width=80
     (( width > 96 )) && width=96
-    printf '%s\n' "$width"
+    printf '%d\n' "$width"
 }
-clear_screen() { [ -t 1 ] && clear 2>/dev/null || true; }
-bar() {
-    local title="$1" width inner left right line max
-    width=$(term_width); inner=$((width - 2)); max=$((inner - 4))
-    [ "${#title}" -le "$max" ] || title="${title:0:max}"
-    left=$(( (inner - ${#title}) / 2 )); right=$((inner - ${#title} - left))
-    line=$(printf '%*s' "$inner" '')
-    line=${line// /─}
-    printf "${P}┌%s┐${N}\n" "$line"
-    printf "${P}│${N}%*s${Y}${B}%s${N}%*s${P}│${N}\n" "$left" '' "$title" "$right" ''
-    printf "${P}└%s┘${N}\n" "$line"
+clear_screen() { [[ -t 1 && ${TERM:-dumb} != dumb ]] && clear 2>/dev/null || true; }
+
+# Wrap prose at words. A long single token (e.g. a public key) stays
+# intact for copying and gets the terminal's own soft wrapping.
+paragraph() {
+    local content=$1 color=${2:-} indent=${3:-2} word line=''
+    local -a words
+    read -ra words <<<"$content"
+    for word in "${words[@]}"; do
+        if [[ -n $line ]] && (( indent + ${#line} + 1 + ${#word} > UI_COLS )); then
+            printf '%*s%s%s%s\n' "$indent" '' "$color" "$line" "$N"
+            line=''
+        fi
+        line="${line:+$line }$word"
+    done
+    printf '%*s%s%s%s\n' "$indent" '' "$color" "$line" "$N"
 }
-kv() { printf "  ${C}%-14s${W}: ${G}%s${N}\n" "$1" "$2"; }
-opt() {
-    local key="$1" label="$2" detail="${3:-}" width detail_width
-    width=$(term_width); detail_width=$((width - 40))
-    (( detail_width < 3 )) && detail_width=3
-    if [ "${#detail}" -gt "$detail_width" ]; then
-        detail="${detail:0:$((detail_width - 3))}..."
+section() {
+    local title=$1 rule span=$((UI_COLS - ${#1} - 4))
+    printf '\n  %s%s%s%s' "$C" "$B" "$title" "$N"
+    if (( span > 0 )); then
+        printf -v rule '%*s' "$span" ''
+        printf '  %s%s%s' "$DIM" "${rule// /─}" "$N"
     fi
-    printf "  ${P}%-4s${W} %-30s${DIM}%s${N}\n" "[$key]" "$label" "$detail"
+    printf '\n'
 }
-section() { printf "\n${P2}${B}  %s${N}\n" "$1"; }
-page_header() {
-    local title="$1" detail="${2:-}" host
+masthead() {
+    local title=$1 host=$2 brand='VPS CONSOLE'
+    UI_COLS=$(term_width)
     clear_screen
-    host=$(cat "$RAGNAR_DIR/host" 2>/dev/null)
-    [ -n "$host" ] || host=$(server_ip)
-    printf "${P2}${B}RAGNAR VPS PANEL${N}\n"
-    printf "${DIM}HOST %s  ·  0 / B = back${N}\n" "${host:-n/a}"
-    bar "$title"
-    [ -z "$detail" ] || printf "  ${W}%s${N}\n" "$detail"
+    printf '  %s RAGNAR %s  %s%s%s' "$BADGE" "$N" "$DIM" "$brand" "$N"
+    if (( 26 + ${#host} <= UI_COLS )); then
+        printf '%*s%s%s%s\n' "$((UI_COLS - 23 - ${#host}))" '' "$DIM" "$host" "$N"
+    else
+        printf '\n'; paragraph "$host" "$DIM"
+    fi
+    printf '\n  %s%s%s\n' "$B" "$title" "$N"
+}
+page_header() {
+    masthead "$1" "$(server_ip)"
+    [[ -z ${2:-} ]] || paragraph "$2" "$DIM"
+}
+kv() {
+    local label=$1 value=$2 color=${3:-}
+    if (( 16 + ${#value} <= UI_COLS )); then
+        printf '  %s%-12s%s  %s%s%s\n' "$DIM" "$label" "$N" "$color" "$value" "$N"
+    else
+        printf '  %s%s%s\n' "$DIM" "$label" "$N"
+        paragraph "$value" "$color" 4
+    fi
+}
+# Fit complete label/value pairs to the row; never crop a value.
+facts() {
+    local label value style i cell=0 keylen=0 pos=0 cols rows count=$(( $# / 2 ))
+    local -a args=("$@")
+    for ((i=0; i<${#args[@]}; i+=2)); do
+        label=${args[i]}; value=${args[i+1]}
+        (( ${#label} > keylen )) && keylen=${#label}
+        (( ${#value} > cell )) && cell=${#value}
+    done
+    cell=$((keylen + 2 + cell + 3))
+    cols=$(( (UI_COLS + 1) / cell ))
+    (( cols > 4 )) && cols=4
+    (( cols < 1 )) && cols=1
+    rows=$(( (count + cols - 1) / cols ))
+    (( rows )) || return 0
+    cols=$(( (count + rows - 1) / rows ))
+    while (( $# )); do
+        label=$1; value=$2; shift 2
+        case "$value" in
+            Online) style=$G ;; Offline) style=$R ;; 'No tunnel') style=$Y ;; *) style=$B ;;
+        esac
+        if (( keylen + 4 + ${#value} > UI_COLS )); then
+            kv "$label" "$value" "$style"; continue
+        fi
+        printf '%*s%s%-*s%s  %s%s%s' "$((pos == 0 ? 2 : 0))" '' "$DIM" "$keylen" "$label" "$N" "$style" "$value" "$N"
+        pos=$((pos + 1))
+        if (( $# && pos < cols )); then
+            printf '%*s' "$((cell - keylen - 2 - ${#value}))" ''
+        else
+            printf '\n'; pos=0
+        fi
+    done
+}
+opt() {
+    local key=$1 label=$2 detail=${3:-} ink=$C
+    case "$key" in 0|x) printf '\n'; ink=$DIM ;; esac
+    [[ ${4:-} != warn ]] || ink=$Y
+    printf '  %s%s%2s%s  %s' "$ink" "$B" "$key" "$N" "$label"
+    if [[ -n $detail ]] && (( UI_COLS >= 68 && ${#label} <= 26 && 34 + ${#detail} <= UI_COLS )); then
+        printf '%*s%s%s%s' "$((28 - ${#label}))" '' "$DIM" "$detail" "$N"
+    fi
+    printf '\n'
 }
 menu_choice() {
     local prompt="${1:-Select an option}"
-    read -rp "$prompt " MENU_CHOICE || return 1
+    read -rp "  $C›$N $prompt " MENU_CHOICE || return 1
     case "$MENU_CHOICE" in b|B|back|BACK|q|Q) MENU_CHOICE=0 ;; esac
 }
-invalid_choice() { echo -e "${R}  Invalid option. Choose a listed number, or 0 to go back.${N}"; pause; }
+invalid_choice() { paragraph "Choose one of the listed keys." "$Y"; pause; }
 svc_dot() {
     if systemctl is-active --quiet "$1" 2>/dev/null; then
-        echo -e "${G}● ONLINE${N}"
+        printf 'Online'
     else
-        echo -e "${R}● OFFLINE${N}"
+        printf 'Offline'
     fi
 }
-svc_dot_cf() { # cloudflared only runs once a tunnel token is installed
+svc_dot_cf() {
     if systemctl is-active --quiet cloudflared 2>/dev/null; then
-        echo -e "${G}● ONLINE${N}"
-    elif systemctl list-unit-files cloudflared.service >/dev/null 2>&1 \
-         && systemctl list-unit-files cloudflared.service | grep -q cloudflared; then
-        echo -e "${R}● OFFLINE${N}"
+        printf 'Online'
+    elif systemctl list-unit-files cloudflared.service 2>/dev/null | grep -q cloudflared; then
+        printf 'Offline'
     else
-        echo -e "${Y}● NO TUNNEL${N}"
+        printf 'No tunnel'
     fi
 }
-pause() { read -rp "Press Enter to continue..." _ || true; }
+pause() { read -rp "  Enter to continue › " _ || true; }
 
-bandwidth_lines() { # Combined RX+TX total for today and this month
+bandwidth_lines() {
     python3 "$CORE" bandwidth-summary 2>/dev/null \
-        | while IFS= read -r l; do echo -e "${C}$l${N}"; done
+        | while IFS= read -r l; do paragraph "$l"; done
 }
 
 human() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
@@ -129,9 +187,20 @@ cpu_usage_pct() {
     fi
 }
 
-print_header() {
-    clear_screen
-    local ip isp os up cpu ram disk now
+resource_meter() {
+    local label=$1 value=$2 size=$(( UI_COLS >= 68 ? 12 : 6 )) pct used fill track
+    if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 12 + size + ${#value} <= UI_COLS )); then
+        pct=${BASH_REMATCH[1]}
+        (( pct > 100 )) && pct=100
+        used=$(( (pct * size + 50) / 100 ))
+        printf -v fill '%*s' "$used" ''; printf -v track '%*s' "$((size - used))" ''
+        printf '  %s%-6s%s  %s%s%s%s%s  %s\n' "$DIM" "$label" "$N" \
+            "$C" "${fill// /█}" "$DIM" "${track// /─}" "$N" "$value"
+    else
+        kv "$label" "$value"
+    fi
+}
+read_host_stats() {
     ip=$(server_ip); isp=$(server_isp)
     os=$(awk -F= '/^PRETTY_NAME=/ {gsub(/"/, "", $2); print $2; exit}' /etc/os-release 2>/dev/null)
     up=$(uptime -p 2>/dev/null | sed 's/^up //')
@@ -139,6 +208,12 @@ print_header() {
     ram=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {if (t>0) printf "%dMB / %dMB (%.0f%%)", (t-a)/1024, t/1024, (t-a)*100/t}' /proc/meminfo 2>/dev/null)
     disk=$(df -Ph / 2>/dev/null | awk 'NR==2 {if ($2 == "0" || $2 == "0B") printf "%s used", $3; else printf "%s / %s (%s)", $3, $2, $5}')
     now=$(date '+%d-%m-%Y %T')
+}
+
+print_header() {
+    local ip isp os up cpu ram disk now
+    read_host_stats
+    masthead "Server overview" "${ip:-n/a}"
 
     # Single Python call for bandwidth + user stats + online count
     local dash_tsv bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online
@@ -151,7 +226,7 @@ bw, st, on = d["bandwidth"], d["stats"], d["online"]
 t = (bw.get("today") or {}).get("total_f", "n/a")
 m = (bw.get("month") or {}).get("total_f", "n/a")
 src = bw.get("source") or ""
-print("\t".join(str(x) for x in [
+print("\x1f".join(str(x) for x in [
     t, m, src if src != "vnstat" else "",
     st.get("vmess", 0), st.get("vless", 0), st.get("trojan", 0),
     st.get("ssws", 0), st.get("ssh", 0), st.get("zivpn", 0),
@@ -159,7 +234,7 @@ print("\t".join(str(x) for x in [
 ]))
 PY
 )
-    IFS=$'\t' read -r bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online <<<"$dash_tsv"
+    IFS=$'\x1f' read -r bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online <<<"$dash_tsv"
 
     # Single batched systemctl call for all header services
     local -a units=(xray haproxy dropbear sing-box udp-custom zivpn ragnar-wsproxy slowdns badvpn-udpgw ragnar-web cloudflared)
@@ -170,48 +245,41 @@ PY
     for idx in "${!units[@]}"; do
         key="${units[$idx]}"
         if [ "${states[$idx]:-inactive}" = "active" ]; then
-            svc_map["$key"]="${G}$(printf '%-15s' '● ONLINE')${N}"
+            svc_map["$key"]=Online
         else
-            svc_map["$key"]="${R}$(printf '%-15s' '● OFFLINE')${N}"
+            svc_map["$key"]=Offline
         fi
     done
     if [ "${states[10]:-inactive}" != "active" ] \
        && [ ! -f /etc/systemd/system/cloudflared.service ] \
        && [ ! -f /lib/systemd/system/cloudflared.service ]; then
-        svc_map["cloudflared"]="${Y}$(printf '%-15s' '● NO TUNNEL')${N}"
+        svc_map[cloudflared]='No tunnel'
     fi
 
-    echo -e "${P2}${B}  RAGNAR VPS PANEL${N}"
-    echo -e "${C}  Telegram : ${W}@farisbazed${C}   Channel : ${W}https://t.me/ragnaresim${N}"
-    bar "SERVER INFO"
-    kv "IP" "${ip:-n/a}";     kv "ISP" "${isp:-Unknown}"; kv "OS" "${os:-Linux}"
-    kv "UPTIME" "${up:-n/a}"; kv "CPU USAGE" "${cpu:-n/a}"
-    kv "RAM USAGE" "${ram:-n/a}"; kv "DISK USAGE" "${disk:-n/a}"; kv "SERVER TIME" "$now"
-
-    bar "BANDWIDTH"
-    printf "  ${C}%-14s${W}: ${G}%-16s${C}%-14s${W}: ${G}%s${N}\n" \
-        "TODAY" "${bw_today:-n/a}" "MONTH" "${bw_month:-n/a}"
-    [ -z "${bw_src:-}" ] || printf "  ${DIM}(bandwidth source: %s)${N}\n" "$bw_src"
-
-    bar "USER STATS"
-    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
-        "VMESS" "${s_vmess:-0}" "VLESS" "${s_vless:-0}" "TROJAN" "${s_trojan:-0}"
-    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
-        "SSWS" "${s_ssws:-0}" "SSH" "${s_ssh:-0}" "ZIVPN" "${s_zivpn:-0}"
-    printf "  ${C}%-8s${W}: ${G}%-6s${C}%-8s${W}: ${G}%s${N}\n" \
-        "TOTAL" "${s_total:-0}" "ONLINE" "${s_online:-0}"
-
-    bar "SERVICE"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "XRAY" "${svc_map[xray]}" "HAPROXY" "${svc_map[haproxy]}"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "DROPBEAR" "${svc_map[dropbear]}" "SING-BOX" "${svc_map[sing-box]}"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "UDP CUSTOM" "${svc_map[udp-custom]}" "UDP ZIVPN" "${svc_map[zivpn]}"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "SLOWDNS" "${svc_map[slowdns]}" "BADVPN" "${svc_map[badvpn-udpgw]}"
-    printf "  ${C}%-12s${W}: %b${C}%-12s${W}: %b\n" "CLOUDFLARED" "${svc_map[cloudflared]}" "WEB PANEL" "${svc_map[ragnar-web]}"
+    section "HOST"
+    facts "Provider" "${isp:-Unknown}" "OS" "${os:-Linux}" \
+          "Uptime" "${up:-n/a}" "Time" "$now"
+    section "RESOURCES"
+    resource_meter "CPU" "${cpu:-n/a}"
+    resource_meter "Memory" "${ram:-n/a}"
+    resource_meter "Disk" "${disk:-n/a}"
+    section "TRANSFER"
+    facts "Today" "${bw_today:-n/a}" "Month" "${bw_month:-n/a}"
+    [[ -z ${bw_src:-} ]] || paragraph "Source: $bw_src" "$DIM"
+    section "ACCOUNTS"
+    facts "Total" "${s_total:-0}" "Online" "${s_online:-0}" "SSH" "${s_ssh:-0}" \
+          "VLESS" "${s_vless:-0}" "VMess" "${s_vmess:-0}" "Trojan" "${s_trojan:-0}" \
+          "SSWS" "${s_ssws:-0}" "ZIVPN" "${s_zivpn:-0}"
+    section "SERVICES"
+    facts "Xray" "${svc_map[xray]}" "HAProxy" "${svc_map[haproxy]}" \
+          "Dropbear" "${svc_map[dropbear]}" "sing-box" "${svc_map[sing-box]}" \
+          "UDP Custom" "${svc_map[udp-custom]}" "ZIVPN" "${svc_map[zivpn]}" \
+          "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}" \
+          "SlowDNS" "${svc_map[slowdns]}" "BadVPN" "${svc_map[badvpn-udpgw]}" \
+          "cloudflared" "${svc_map[cloudflared]}" "Web panel" "${svc_map[ragnar-web]}"
 }
 
 main_menu() {
-    bar "NAVIGATION"
     section "ACCOUNTS & ACCESS"
     opt 1 "SSH / SSL accounts" "Users, expiry, quota, IP limits"
     opt 2 "Xray accounts" "VLESS · VMess · Trojan · SSWS · AnyTLS"
@@ -226,10 +294,10 @@ main_menu() {
     section "SYSTEM"
     opt 10 "Update panel" "Back up state, then update from GitHub"
     opt 11 "Clear RAM cache" "Drop Linux filesystem caches"
-    opt 12 "Reboot VPS" "Restart the whole server"
-    opt 13 "Uninstall panel" "Restore snapshots and remove Ragnar"
+    opt 12 "Reboot VPS" "Restart the whole server" warn
+    opt 13 "Uninstall panel" "Restore snapshots and remove Ragnar" warn
     opt x "Exit" "Leave this menu"
-    printf "\n${DIM}  Panel by @farisbazed · https://t.me/ragnaresim${N}\n"
+    paragraph "@farisbazed · https://t.me/ragnaresim" "$DIM"
 }
 
 # ---------------------------------------------------------------------
@@ -237,21 +305,28 @@ main_menu() {
 # ---------------------------------------------------------------------
 ssh_create() {
     local u p d q i
-    read -rp "Username        : " u
-    read -rsp "Password        : " p; echo
-    read -rp "Duration (days) : " d
-    read -rp "Quota GB (0=inf): " q
-    read -rp "IP limit (0=inf): " i
+    page_header "Create SSH account" "Set the login credentials and access limits."
+    section "CREDENTIALS"
+    read -rp "  Username: " u
+    read -rsp "  Password (hidden): " p; echo
+    section "LIMITS"
+    read -rp "  Duration in days [30]: " d
+    read -rp "  Quota in GB [0 = unlimited]: " q
+    read -rp "  IP limit [0 = unlimited]: " i
     python3 "$CORE" ssh-add "$u" "$p" "${d:-30}" "${q:-0}" "${i:-0}"
     pause
 }
-ssh_list() { python3 "$CORE" ssh-list; pause; }
-ssh_info() { local u; read -rp "Username: " u; python3 "$CORE" ssh-info "$u"; pause; }
+ssh_list() { page_header "SSH accounts"; python3 "$CORE" ssh-list; pause; }
+ssh_info() {
+    local u
+    page_header "SSH account details"
+    read -rp "  Username: " u; python3 "$CORE" ssh-info "$u"; pause
+}
 ssh_edit() {
     local u what v
-    read -rp "Username to edit: " u
-    page_header "EDIT SSH ACCOUNT" "Choose one account setting to update."
-    echo "  Account: ${u:-<not set>}"
+    page_header "Edit SSH account" "Choose a setting to update."
+    read -rp "  Username to edit: " u
+    kv "Account" "${u:-not set}"
     section "ACCOUNT SETTINGS"
     opt 1 "Renew / extend expiry" "Add days to the current expiry"
     opt 2 "Set traffic quota" "Enter GB; 0 means unlimited"
@@ -276,22 +351,22 @@ ssh_edit() {
 }
 ssh_del() {
     local u a
-    page_header "DELETE SSH ACCOUNT" "Deletion removes the account from the panel and its host access."
-    read -rp "Username to delete: " u
-    read -rp "Delete '${u:-<not set>}'? [y/N] " a
+    page_header "Delete SSH account" "This removes the account and its access to the host."
+    read -rp "  Username to delete: " u
+    read -rp "  Delete '${u:-<not set>}'? [y/N] " a
     case "$a" in y|Y) python3 "$CORE" ssh-del "$u" ;; *) echo "No changes made." ;; esac
     pause
 }
 ssh_menu() {
     while true; do
-        page_header "SSH & SSL" "Manage shell accounts, access limits and connection services."
-        printf "  OpenSSH : %s   Dropbear : %s   SSH-WS : %s\n" \
-            "$(svc_dot ssh)" "$(svc_dot dropbear)" "$(svc_dot ragnar-wsproxy)"
+        page_header "SSH & SSL" "Shell accounts and access limits."
+        section "SERVICES"
+        facts "OpenSSH" "$(svc_dot ssh)" "Dropbear" "$(svc_dot dropbear)" "SSH-WS" "$(svc_dot ragnar-wsproxy)"
         section "ACCOUNT MANAGEMENT"
         opt 1 "Create account" "Username, password, expiry and limits"
         opt 2 "List accounts" "Show users, traffic used and quota"
         opt 3 "Edit / renew account" "Expiry, quota, IP limit, password or access"
-        opt 4 "Delete account" "Remove a panel user"
+        opt 4 "Delete account" "Remove a panel user" warn
         opt 5 "Account details" "Ports, expiry, quota and live connections"
         section "CONNECTIONS & SERVICES"
         opt 6 "Connection details" "OpenSSH :22 · Dropbear :109 · SSH-WS :443"
@@ -448,7 +523,7 @@ xray_edit() {
 }
 xray_del() {
     local u a
-    page_header "DELETE XRAY ACCOUNT" "Deletion removes this user from all enabled Xray protocols."
+    page_header "Delete Xray account" "This removes the user from every enabled Xray protocol."
     read -rp "Username to delete: " u
     read -rp "Delete '${u:-<not set>}'? [y/N] " a
     case "$a" in y|Y) python3 "$CORE" xray-del "$u" ;; *) echo "No changes made." ;; esac
@@ -458,16 +533,17 @@ xray_menu() {
     while true; do
         local stats
         stats=$(python3 "$CORE" stats 2>/dev/null || echo '{}')
-        page_header "XRAY ACCOUNTS" "One account provisions VLESS, VMess, Trojan, SSWS and AnyTLS together."
-        printf "  Users  VLESS %s  ·  VMess %s  ·  Trojan %s  ·  SSWS %s\n" \
-            "$(stats_count vless "$stats")" "$(stats_count vmess "$stats")" \
-            "$(stats_count trojan "$stats")" "$(stats_count ssws "$stats")"
-        printf "  Xray   %s   Sing-box / AnyTLS   %s\n" "$(svc_dot xray)" "$(svc_dot sing-box)"
+        page_header "Xray accounts" "One account serves all enabled protocols."
+        section "PROTOCOL USERS"
+        facts "VLESS" "$(stats_count vless "$stats")" "VMess" "$(stats_count vmess "$stats")" \
+              "Trojan" "$(stats_count trojan "$stats")" "SSWS" "$(stats_count ssws "$stats")"
+        section "SERVICES"
+        facts "Xray" "$(svc_dot xray)" "sing-box / AnyTLS" "$(svc_dot sing-box)"
         section "ACCOUNT MANAGEMENT"
         opt 1 "Create account" "Enable all supported protocols at once"
         opt 2 "List accounts" "View traffic used, expiry, quota and status"
         opt 3 "Edit / renew account" "Expiry, quota, IP limit or access"
-        opt 4 "Delete account" "Remove a user from all protocols"
+        opt 4 "Delete account" "Remove a user from all protocols" warn
         opt 5 "Account details" "Usage, limits and live traffic"
         section "SHARE & SERVICE"
         opt 6 "Browse links" "Choose a route first"
@@ -492,9 +568,9 @@ xray_menu() {
 # ---------------------------------------------------------------------
 zivpn_edit() {
     local u what v
-    read -rp "Username to edit: " u
-    page_header "EDIT ZIVPN ACCOUNT" "Update password, expiry or access."
-    echo "  Account: ${u:-<not set>}"
+    page_header "Edit ZIVPN account" "Update password, expiry or access."
+    read -rp "  Username to edit: " u
+    kv "Account" "${u:-not set}"
     section "ACCOUNT SETTINGS"
     opt 1 "Renew / extend expiry" "Add days to the current expiry"
     opt 2 "Change password" "Password input is hidden"
@@ -515,13 +591,14 @@ zivpn_edit() {
 }
 zivpn_menu() {
     while true; do
-        page_header "UDP ZIVPN" "Password-based UDP access. Main service listens on UDP 5667."
-        printf "  Service : %s   Endpoint : %s:5667/udp\n" "$(svc_dot zivpn)" "$(server_ip)"
+        page_header "UDP ZIVPN" "Password-based UDP access."
+        section "CONNECTION"
+        facts "Service" "$(svc_dot zivpn)" "Endpoint" "$(server_ip):5667/udp"
         section "ACCOUNTS"
         opt 1 "Create user" "Add a password and expiry"
         opt 2 "List users" "Review usernames and expiry dates"
         opt 3 "Edit / renew user" "Extend expiry, change password or toggle access"
-        opt 4 "Delete user" "Remove one ZIVPN account"
+        opt 4 "Delete user" "Remove one ZIVPN account" warn
         section "SERVICE"
         opt 5 "Server details" "Port and redirect range"
         opt 6 "Restart service" "Apply the current ZIVPN configuration"
@@ -544,10 +621,13 @@ zivpn_menu() {
 }
 udpcustom_menu() {
     while true; do
-        page_header "UDP CUSTOM" "UDP forwarding uses the same credentials as your SSH accounts."
-        printf "  UDP Custom : %s   BadVPN gateway : %s\n" "$(svc_dot udp-custom)" "$(svc_dot badvpn-udpgw)"
-        echo "  UDP range : 1-65535 (panel ports excluded) → 127.0.0.1:36712"
-        echo "  Gateway   : badvpn-udpgw at 127.0.0.1:7300"
+        page_header "UDP Custom" "UDP forwarding with SSH account credentials."
+        section "SERVICES"
+        facts "UDP Custom" "$(svc_dot udp-custom)" "BadVPN" "$(svc_dot badvpn-udpgw)"
+        section "ROUTING"
+        kv "UDP range" "1–65535, except panel ports"
+        kv "Forward to" "127.0.0.1:36712"
+        kv "Gateway" "127.0.0.1:7300"
         section "SERVICE ACTIONS"
         opt 1 "Restart UDP services" "Restart UDP Custom and BadVPN gateway"
         opt 2 "View service log" "Inspect recent UDP Custom status"
@@ -562,13 +642,22 @@ udpcustom_menu() {
         esac
     done
 }
+slowdns_build() {
+    if [[ ! -x /usr/local/bin/dnstt-server ]]; then
+        kv "Build" "Not installed · use 1 or 7" "$Y"
+    elif [[ -f $1/.turbo_kcp_patched ]]; then
+        kv "Build" "Turbo patch active" "$G"
+    else
+        kv "Build" "Standard · use 7 for Turbo"
+    fi
+}
 slowdns_menu() {
     # SlowDNS is the other panel's implementation, integrated:
     # core/slowdns-setup.sh (their turbo build/NAT/CF/unit code),
     # config in settings.json, keys in $RAGNAR_DIR/slowdns/.
     local SD="$RAGNAR_DIR/slowdns"
     while true; do
-        page_header "SLOWDNS / DNSTT" "DNS-tunnel settings and diagnostics. Changes update the service configuration."
+        page_header "SlowDNS / DNSTT" "DNS tunnel settings and diagnostics."
         local sd_tsv ns pub mtu resolver target
         sd_tsv=$(python3 - "$RAGNAR_DIR/settings.json" <<'PY' 2>/dev/null
 import json, sys
@@ -576,7 +665,7 @@ try:
     s = json.load(open(sys.argv[1]))
 except Exception:
     s = {}
-print("\t".join(str(x) for x in [
+print("\x1f".join(str(x) for x in [
     s.get("ns", ""),
     s.get("slowdns_pubkey", ""),
     s.get("slowdns_mtu", 1232),
@@ -585,35 +674,32 @@ print("\t".join(str(x) for x in [
 ]))
 PY
 )
-        IFS=$'\t' read -r ns pub mtu resolver target <<<"$sd_tsv"
+        IFS=$'\x1f' read -r ns pub mtu resolver target <<<"$sd_tsv"
         mtu=${mtu:-1232}; target=${target:-22}
-        echo "Nameserver : ${ns:-not set}"
-        echo "Public key : ${pub:-not generated}"
-        echo "Endpoint   : UDP 53 -> dnstt 127.0.0.1:5300 -> SSH 127.0.0.1:$target"
-        echo "MTU        : $mtu"
-        if [ -n "$resolver" ]; then
-            case "$resolver" in *:*) echo "Resolver   : $resolver" ;; *) echo "Resolver   : $resolver:53" ;; esac
-        else
-            echo "Resolver   : 1.1.1.1:53 (default)"
-        fi
-        if [ -x /usr/local/bin/dnstt-server ]; then
-            echo "Build      : dnstt-server (turbo patch $([ -f "$SD/.turbo_kcp_patched" ] && echo ACTIVE || echo "not applied - use option 7"))"
-        else
-            echo "Build      : NOT INSTALLED (use option 1 or 7)"
-        fi
-        echo "Tip: turbo = KCP patch + Dropbear backend (option 7). Keep MTU at"
-        echo "     1232: bigger MTUs make some resolver paths reject the app."
+        section "TUNNEL PROFILE"
+        kv "Nameserver" "${ns:-Not set}"
+        case "$resolver" in
+            '') kv "Resolver" "1.1.1.1:53 (default)" ;;
+            *:*) kv "Resolver" "$resolver" ;;
+            *) kv "Resolver" "$resolver:53" ;;
+        esac
+        kv "MTU" "$mtu"
+        slowdns_build "$SD"
+        kv "Public key" "${pub:-Not generated}"
+        section "PACKET PATH"
+        facts "Ingress" "UDP :53" "DNSTT" "127.0.0.1:5300" "SSH" "127.0.0.1:$target"
+        paragraph "MTU 1232 is safest across resolvers." "$DIM"
         section "CONFIGURATION"
-        opt 1 "Set nameserver & start" "Optionally create DNS records with Cloudflare"
+        opt 1 "Set nameserver & start" "Optional Cloudflare DNS records"
         opt 2 "Run diagnostics" "Check UDP listener and NS delegation"
         opt 3 "Change SSH backend" "OpenSSH :22 or Dropbear :109"
         opt 4 "Set resolver" "Choose the upstream DNS resolver"
         opt 5 "Set MTU" "1232 is the safest default"
-        opt 6 "Regenerate keys" "Create a new server key pair"
-        opt 7 "Apply Turbo preset" "Rebuild, Dropbear backend and MTU 1232"
+        opt 6 "Replace server keys" "Generate a new key pair" warn
+        opt 7 "Apply Turbo preset" "KCP patch, Dropbear, MTU 1232"
         section "SERVICE"
         opt 8 "Restart SlowDNS" "Restart with the current settings"
-        opt 9 "Stop SlowDNS" "Stop and disable the service"
+        opt 9 "Stop & disable SlowDNS" "Disable automatic startup" warn
         opt 0 "Back" "Return to the dashboard"
         menu_choice "Select an option:" || return
         c=$MENU_CHOICE
@@ -668,11 +754,10 @@ except Exception:
 }
 cloudflared_menu() {
     while true; do
-        page_header "CLOUDFLARE" "Manage domain settings, link hostnames and the optional tunnel."
-        printf "  Tunnel service : %s\n" "$(svc_dot_cf)"
-        echo "Cloudflare carries the WS protocols (VLESS/VMESS/Trojan/SSWS/SSH-WS)"
-        echo "on ports 80 and 443. AnyTLS is raw TLS and stays direct (CF proxy"
-        echo "cannot carry it - that is a Cloudflare limit, not a panel limit)."
+        page_header "Cloudflare" "Domains, link hostnames and tunnels."
+        section "ROUTING"
+        facts "Tunnel" "$(svc_dot_cf)"
+        paragraph "WebSocket protocols use ports 80 and 443. AnyTLS uses raw TLS and stays direct." "$DIM"
         section "DOMAIN & TUNNEL"
         opt 1 "Set domain" "TLS certificates and generated links"
         opt 2 "Set Cloudflare link host" "Hostname used in share links"
@@ -725,15 +810,16 @@ PY
 # ---------------------------------------------------------------------
 webpanel_menu() {
     while true; do
-        page_header "WEB PANEL" "Open the browser UI or manage its service and administrator account."
+        page_header "Web panel" "Browser access and administrator settings."
         local dom url
         dom=$(python3 -c "import json;print(json.load(open('$RAGNAR_DIR/settings.json')).get('domain',''))" 2>/dev/null)
         [ -z "$dom" ] && dom=$(server_ip)
         url="https://$dom/panel"
-        echo "URL     : $url"
-        printf "Service : %s\n" "$(svc_dot ragnar-web)"
-        echo "Log in with the admin username/password (set at install;"
-        echo "reset it below if you lost it)."
+        section "ACCESS"
+        kv "URL" "$url"
+        facts "Service" "$(svc_dot ragnar-web)"
+        paragraph "Use the admin credentials set at install." "$DIM"
+        section "ADMINISTRATION"
         opt 1 "Service status" "Show recent service details"
         opt 2 "Reset admin password" "Set a new password for the web UI"
         opt 3 "Restart web panel" "Restart the local web service"
@@ -759,7 +845,7 @@ webpanel_menu() {
 # ---------------------------------------------------------------------
 tools_menu() {
     while true; do
-        page_header "TOOLS & DIAGNOSTICS" "Maintenance actions and quick checks for this VPS."
+        page_header "Tools & diagnostics" "Maintenance and health checks for this VPS."
         section "MAINTENANCE"
         opt 1 "Restart panel services" "Connected users may be briefly interrupted"
         opt 2 "Back up panel data" "Create a dated archive under /root"
@@ -786,10 +872,9 @@ tools_menu() {
     done
 }
 update_panel() {
-    print_header; bar "UPDATE PANEL"
-    echo -e "${W}The panel updates itself from GitHub (main branch).${N}"
-    echo -e "${W}Users, settings, certificates and SlowDNS keys are kept;${N}"
-    echo -e "${W}a backup of the current state is saved to /root first.${N}"
+    page_header "Update panel" "Install the latest version from the main branch."
+    section "BEFORE YOU UPDATE"
+    paragraph "A backup is saved to /root first. Users, settings, certificates and SlowDNS keys are kept."
     echo
     bash "$RAGNAR_DIR/core/update.sh" check || true
     echo
@@ -806,22 +891,23 @@ update_panel() {
     pause
 }
 status_page() {
-    page_header "STATUS & HEALTH" "Current service state, bandwidth and listening ports."
+    page_header "Status & health" "Service state, bandwidth and listening ports."
+    section "SYSTEM SERVICES"
     local -a units=(haproxy xray sing-box ragnar-wsproxy dropbear ssh zivpn udp-custom \
                     badvpn-udpgw slowdns cloudflared ragnar-web ragnar-check.timer ragnar-watchdog.timer)
     local -a states=()
     mapfile -t states < <(systemctl is-active "${units[@]}" 2>/dev/null || true)
-    local i st_txt
+    local i state
+    local -a services=()
     for i in "${!units[@]}"; do
-        if [ "${states[$i]:-inactive}" = "active" ]; then
-            st_txt="${G}● ONLINE${N}"
-        else
-            st_txt="${R}● OFFLINE${N}"
-        fi
-        printf "  ${C}%-24s${W}: %b\n" "${units[$i]}" "$st_txt"
+        state=Offline
+        [[ ${states[i]:-inactive} == active ]] && state=Online
+        services+=("${units[i]}" "$state")
     done
-    echo; bar "BANDWIDTH"; bandwidth_lines
-    echo; ss -tulnp 2>/dev/null | grep -E ':(80|443|22|109|5667|36712|53|8446)\b' || true
+    facts "${services[@]}"
+    section "BANDWIDTH"; bandwidth_lines
+    section "LISTENING PORTS"
+    ss -tulnp 2>/dev/null | grep -E ':(80|443|22|109|5667|36712|53|8446)\b' || true
     pause
 }
 
@@ -834,7 +920,7 @@ fi
 
 while true; do
     print_header; main_menu
-    read -rp "Select menu: " opt
+    read -rp "  $C›$N Select menu: " opt || exit 0
     case $opt in
         1) ssh_menu ;;
         2) xray_menu ;;
