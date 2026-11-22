@@ -24,24 +24,16 @@ class TestDomainMenu(unittest.TestCase):
         (self.base / "settings.json").write_text(json.dumps({
             "domain": "old.example.com", "ns": "ns.example.com"}))
         (self.base / "domain").write_text("old.example.com\n")
+        (self.base / "host").write_text("203.0.113.10\n")
+        self.prelude = 'source "$1"; pause() { :; }; svc_dot_cf() { echo "No tunnel"; }; '
         stub = self.base / "systemctl"
         stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$RAGNAR_DIR/restarts"\n')
         stub.chmod(0o755)
         self.env["PATH"] = str(self.base) + os.pathsep + self.env["PATH"]
 
     def set_domain(self, domain, fail_writes=False):
-        menu = (ROOT / "menu.sh").read_text()
-        function = menu[menu.index("cloudflared_menu() {"):]
-        function = function[:function.index("\n# ---------------------------------------------------------------------")]
-        script = '\n'.join([
-            'CORE="$1"', function,
-            'page_header() { :; }; section() { :; }; opt() { :; }',
-            'svc_dot_cf() { :; }; pause() { :; }',
-            'menu_choice() { read -r MENU_CHOICE; }',
-            'ulimit -f 0' if fail_writes else ':',
-            'cloudflared_menu',
-        ])
-        return subprocess.run(["bash", "-c", script, "domain-test", str(ROOT / "core/ragnar.py")],
+        script = self.prelude + ('ulimit -f 0; ' if fail_writes else '') + 'cloudflared_menu'
+        return subprocess.run(["bash", "-c", script, "domain-test", str(ROOT / "menu.sh")],
                               input=f"1\n{domain}\n0\n", env=self.env,
                               capture_output=True, text=True, timeout=10)
 
@@ -83,24 +75,13 @@ class TestDomainMenu(unittest.TestCase):
         self.assertEqual(self.resolved_domain(), "new.example.com")
 
     def test_quick_tunnel_exit_returns_to_menu(self):
-        menu = (ROOT / "menu.sh").read_text()
-        function = menu[menu.index("cloudflared_menu() {"):]
-        function = function[:function.index("\n# ---------------------------------------------------------------------")]
-        script = '\n'.join([
-            function,
-            'page_header() { :; }; section() { :; }; opt() { :; }',
-            'svc_dot_cf() { :; }; pause() { :; }',
-            'menu_choice() { read -r MENU_CHOICE; }',
-            'cloudflared_menu',
-            'echo MENU_RETURNED',
-            'test -z "$(trap -p INT)"',
-        ])
+        script = self.prelude + 'cloudflared_menu; echo MENU_RETURNED; test -z "$(trap -p INT)"'
         for status in (0, 7):
             with self.subTest(status=status):
                 stub = self.base / "cloudflared"
                 stub.write_text(f'#!/bin/sh\nexit {status}\n')
                 stub.chmod(0o755)
-                result = subprocess.run(["bash", "-c", script], input="4\n0\n",
+                result = subprocess.run(["bash", "-c", script, "domain-test", str(ROOT / "menu.sh")], input="4\n0\n",
                                         env=self.env, capture_output=True,
                                         text=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -124,19 +105,8 @@ while True:
     time.sleep(0.1)
 ''')
         stub.chmod(0o755)
-        menu = (ROOT / "menu.sh").read_text()
-        function = menu[menu.index("cloudflared_menu() {"):]
-        function = function[:function.index("\n# ---------------------------------------------------------------------")]
-        script = '\n'.join([
-            function,
-            'page_header() { echo MENU; }; section() { :; }; opt() { :; }',
-            'svc_dot_cf() { :; }; pause() { :; }',
-            'menu_choice() { read -r MENU_CHOICE; }',
-            'cloudflared_menu',
-            'echo MENU_RETURNED',
-            'test -z "$(trap -p INT)"',
-        ])
-        proc = subprocess.Popen(["bash", "-c", script], env=self.env,
+        script = self.prelude + 'page_header() { echo MENU; UI_COLS=80; }; cloudflared_menu; echo MENU_RETURNED'
+        proc = subprocess.Popen(["bash", "-c", script, "domain-test", str(ROOT / "menu.sh")], env=self.env,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True,
                                 start_new_session=True)

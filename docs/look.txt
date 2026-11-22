@@ -1,44 +1,47 @@
-   RAGNAR VPS MANAGEMENT PANEL
-   Telegram : @farisbazed   Channel : https://t.me/ragnaresim
-┌──────────────────────────────────────────────┐
-│                 SERVER INFO                  │
-└──────────────────────────────────────────────┘
-IP            : 104.29.196.209
-ISP           : Cloudflare, Inc.
-OS            : Ubuntu 24.04.5 LTS
-UPTIME        : 18 minutes
-CPU USAGE     : 10.3%
-RAM USAGE     : 7299MB / 7934MB
-DISK USAGE    : 206M/7.5G
-SERVER TIME   : 11-11-2026 14:22:16
-┌──────────────────────────────────────────────┐
-│                  BANDWIDTH                   │
-└──────────────────────────────────────────────┘
-TODAY         : n/a               MONTH         : n/a
-┌──────────────────────────────────────────────┐
-│                  USER STATS                  │
-└──────────────────────────────────────────────┘
-VMESS   : 1     VLESS   : 1     TROJAN   : 1
-SSWS    : 1     SSH     : 0     ZIVPN    : 0
-TOTAL   : 1     ONLINE  : 0
-┌──────────────────────────────────────────────┐
-│                   SERVICE                    │
-└──────────────────────────────────────────────┘
-XRAY         : ● OFFLINE  HAPROXY      : ● OFFLINE
-DROPBEAR     : ● OFFLINE  SING-BOX     : ● OFFLINE
-UDP CUSTOM   : ● OFFLINE  UDP ZIVPN    : ● OFFLINE
-SSH WS       : ● OFFLINE  WSS / SSL    : ● OFFLINE
-SLOWDNS      : ● OFFLINE  CLOUDFLARED  : ● OFFLINE
-┌──────────────────────────────────────────────┐
-│                  MAIN MENU                   │
-└──────────────────────────────────────────────┘
-〈1〉  SSH & SSL        〈9〉  UDP CUSTOM
-〈2〉  VMESS            〈10〉 SLOWDNS
-〈3〉  VLESS            〈11〉 CLOUDFLARED
-〈4〉  TROJAN           〈12〉 TOOLS
-〈5〉  SSWS             〈13〉 STATUS
-〈6〉  ANYTLS           〈14〉 CLEAR RAM
-〈7〉  XRAY (ALL)       〈15〉 REBOOT VPS
-〈8〉  UDP ZIVPN        〈16〉 UNINSTALL
-〈x〉  EXIT
-   Panel by @farisbazed - https://t.me/ragnaresim
+   RAGNAR   VPS CONSOLE                                               192.0.2.10
+
+  Server overview
+
+  HOST  ────────────────────────────────────────────────────────────────────────
+  Provider  Example Networks   OS        Debian 12
+  Uptime    4 days             Time      12:40 UTC
+
+  RESOURCES  ───────────────────────────────────────────────────────────────────
+  CPU     ███─────────  24.8%
+  Memory  █████───────  1.5 / 4 GiB (38%)
+  Disk    ███─────────  18 / 80 GiB (23%)
+
+  TRANSFER  ────────────────────────────────────────────────────────────────────
+  Today  1.2 GiB   Month  8.4 GiB
+
+  ACCOUNTS  ────────────────────────────────────────────────────────────────────
+  Total   14   Online  3    SSH     8    VLESS   4
+  VMess   4    Trojan  4    SSWS    4    ZIVPN   2
+
+  SERVICES  ────────────────────────────────────────────────────────────────────
+  Xray         Online      HAProxy      Online      Dropbear     Online
+  sing-box     Online      UDP Custom   Online      ZIVPN        Offline
+  SSH WS       Online      WSS / SSL    Online      SlowDNS      Online
+  BadVPN       Online      cloudflared  No tunnel   Web panel    Online
+
+  ACCOUNTS & ACCESS  ───────────────────────────────────────────────────────────
+   1  SSH / SSL accounts          Users, expiry, quota, IP limits
+   2  Xray accounts               VLESS · VMess · Trojan · SSWS · AnyTLS
+   3  UDP ZIVPN                   Passwords and UDP access
+   4  UDP Custom                  SSH-backed UDP gateway
+
+  SERVICES & MONITORING  ───────────────────────────────────────────────────────
+   5  SlowDNS                     Nameserver, resolver, keys and MTU
+   6  Cloudflare                  Domains, links and tunnel
+   7  Web panel                   URL, admin password and service
+   8  Status                      Services, bandwidth and listening ports
+   9  Tools                       Restart, backup, checks and diagnostics
+
+  SYSTEM  ──────────────────────────────────────────────────────────────────────
+  10  Update panel                Back up state, then update from GitHub
+  11  Clear RAM cache             Drop Linux filesystem caches
+  12  Reboot VPS                  Restart the whole server
+  13  Uninstall panel             Restore snapshots and remove Ragnar
+
+   x  Exit                        Leave this menu
+  @farisbazed · https://t.me/ragnaresim
