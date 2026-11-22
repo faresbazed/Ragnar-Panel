@@ -29,7 +29,7 @@ class TestDomainMenu(unittest.TestCase):
         stub.chmod(0o755)
         self.env["PATH"] = str(self.base) + os.pathsep + self.env["PATH"]
 
-    def set_domain(self, domain):
+    def set_domain(self, domain, fail_writes=False):
         menu = (ROOT / "menu.sh").read_text()
         function = menu[menu.index("cloudflared_menu() {"):]
         function = function[:function.index("\n# ---------------------------------------------------------------------")]
@@ -38,6 +38,7 @@ class TestDomainMenu(unittest.TestCase):
             'page_header() { :; }; section() { :; }; opt() { :; }',
             'svc_dot_cf() { :; }; pause() { :; }',
             'menu_choice() { read -r MENU_CHOICE; }',
+            'ulimit -f 0' if fail_writes else ':',
             'cloudflared_menu',
         ])
         return subprocess.run(["bash", "-c", script, "domain-test", str(ROOT / "core/ragnar.py")],
@@ -69,10 +70,9 @@ class TestDomainMenu(unittest.TestCase):
         self.assertEqual((self.base / "domain").read_text().strip(), "")
 
     def test_settings_write_failure_does_not_report_saved(self):
-        (self.base / "settings.json.tmp").mkdir()
-        result = self.set_domain("new.example.com")
+        result = self.set_domain("new.example.com", fail_writes=True)
         self.assertNotIn("saved", result.stdout)
-        self.assertIn("IsADirectoryError", result.stderr)
+        self.assertIn("File too large", result.stderr)
         self.assertEqual(self.resolved_domain(), "old.example.com")
         self.assertFalse((self.base / "restarts").exists())
 

@@ -19,6 +19,31 @@ warn() { echo -e "\033[93m[RAGNAR]\033[0m $*"; }
 die()  { echo -e "\033[91m[RAGNAR] $*\033[0m"; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "Run as root: sudo bash install.sh"
+LOCK=/var/lock/ragnar-update.lock
+MANAGED_UPDATE=0
+# Current and older self-updaters pass fd 9 across backup and installation.
+if [ "${RAGNAR_UPDATE:-0}" = 1 ] && [[ /proc/$$/fd/9 -ef "$LOCK" ]]; then
+    MANAGED_UPDATE=1
+else
+    exec 9>"$LOCK" || die "Cannot open install lock"
+    flock -n 9 || die "Another install or update is already running"
+fi
+code_files=(core/{ragnar.py,checker.py,wsproxy.py,install-state.sh,panel-state.py,watchdog.sh,slowdns-setup.sh,update.sh}
+            menu.sh uninstall.sh web/webpanel.py)
+for file in "${code_files[@]}" core/cert-deploy.sh configs/{99-ragnar-tuning.conf,haproxy.cfg}; do
+    [ -s "$SRC/$file" ] || die "Incomplete release: missing $file"
+done
+IS_UPDATE=0
+if [ "${RAGNAR_UPDATE:-0}" = 1 ] || [ -n "${RAGNAR_UPDATE_COPY:-}" ]; then IS_UPDATE=1; fi
+for path in core/ragnar.py settings.json web.json version domain host db certs slowdns; do
+    if [ -e "$BASE/$path" ] || [ -L "$BASE/$path" ]; then IS_UPDATE=1; break; fi
+done
+LEGACY_SLOWDNS=/etc/vps-panel/slowdns
+if [ "$IS_UPDATE" = 1 ] || [ -d "$LEGACY_SLOWDNS" ]; then
+    RAGNAR_DIR="$BASE" python3 "$SRC/core/panel-state.py" validate "$LEGACY_SLOWDNS" ||
+        die "Cannot safely upgrade existing panel state; no install changes made"
+fi
+
 . "$SRC/core/install-state.sh" || die "Cannot load install-state helpers"
 ragnar_state_init || die "Cannot create installer state directory"
 # Snapshot service state before apt can start newly installed daemons. On a
@@ -26,59 +51,37 @@ ragnar_state_init || die "Cannot create installer state directory"
 for svc in haproxy dropbear vnstat netfilter-persistent masterdnsvpn xray sing-box zivpn udp-custom badvpn-udpgw udpgw \
            slowdns ragnar-wsproxy ragnar-landing ragnar-check.timer \
            ragnar-watchdog.timer ragnar-web; do
-    ragnar_capture_service_state "$svc" || warn "Could not record prior state for $svc"
+    ragnar_capture_service_state "$svc" || die "Cannot preserve prior service state for $svc"
 done
 # iptables-persistent saves the whole host ruleset; keep the existing saved
 # rules so uninstall can restore them instead of leaving Ragnar's snapshot.
-ragnar_backup_file /etc/iptables/rules.v4 || die "Cannot preserve existing IPv4 firewall rules"
-ragnar_backup_file /etc/iptables/rules.v6 || die "Cannot preserve existing IPv6 firewall rules"
+new_firewall_files=()
+for rules_file in /etc/iptables/rules.v{4,6}; do
+    if [ ! -e "$RAGNAR_STATE_DIR/registered$rules_file" ] && [ ! -e "$rules_file" ] && [ ! -L "$rules_file" ]; then
+        new_firewall_files+=("$rules_file")
+    fi
+    ragnar_backup_file "$rules_file" || die "Cannot preserve existing firewall rules: $rules_file"
+done
 . /etc/os-release 2>/dev/null || die "Cannot read /etc/os-release"
 case " $ID ${ID_LIKE:-} " in
     *ubuntu*|*debian*) : ;;
     *) warn "Tested on Ubuntu/Debian - continuing anyway" ;;
 esac
 
-IS_UPDATE=0
-if [ "${RAGNAR_UPDATE:-0}" = "1" ] || [ -n "${RAGNAR_UPDATE_COPY:-}" ] || [ -f "$BASE/core/ragnar.py" ]; then
-    IS_UPDATE=1
-fi
-
 # ---------------------------------------------------------------------
 # Install / replace all panel code files FIRST so updates always land
 # even if a third-party apt repository or optional network fetch fails.
 # ---------------------------------------------------------------------
-mkdir -p "$BASE"/{db,core,certs,xray,sing-box,zivpn,udp,slowdns,web}
+mkdir -p "$BASE"/{db,core,certs,xray,sing-box,zivpn,udp,slowdns,web} || die "Cannot create panel directories"
 rm -rf "$BASE/core/__pycache__" "$BASE/web/__pycache__"
-install -m 755 "$SRC/core/ragnar.py"        "$BASE/core/ragnar.py"
-install -m 755 "$SRC/core/checker.py"       "$BASE/core/checker.py"
-install -m 755 "$SRC/core/wsproxy.py"       "$BASE/core/wsproxy.py"
-install -m 755 "$SRC/core/install-state.sh" "$BASE/core/install-state.sh"
-install -m 755 "$SRC/core/watchdog.sh"      "$BASE/core/watchdog.sh"
-install -m 755 "$SRC/core/slowdns-setup.sh" "$BASE/core/slowdns-setup.sh"
-install -m 755 "$SRC/core/update.sh"        "$BASE/core/update.sh"
-install -m 755 "$SRC/menu.sh"               "$BASE/menu.sh"
-install -m 755 "$SRC/uninstall.sh"          "$BASE/uninstall.sh"
-install -m 755 "$SRC/web/webpanel.py"       "$BASE/web/webpanel.py"
+for file in "${code_files[@]}"; do
+    install -m 755 "$SRC/$file" "$BASE/$file" || die "Cannot install $file"
+done
 ragnar_backup_file /usr/local/bin/menu || die "Cannot preserve existing menu command"
 ragnar_backup_file /usr/local/bin/ragnar || die "Cannot preserve existing ragnar command"
-rm -f /usr/local/bin/menu /usr/local/bin/ragnar
-ln -s "$BASE/menu.sh" /usr/local/bin/menu
-ln -s "$BASE/menu.sh" /usr/local/bin/ragnar
-
-# Record the installed code version (from git checkout or GitHub tarball folder name).
-if command -v git >/dev/null 2>&1 && git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
-    printf '%s %s\n' "$(git -C "$SRC" rev-parse HEAD)" "$(date -Is)" > "$BASE/version"
-else
-    _src_base="$(basename "$SRC")"
-    case "$_src_base" in
-        *-*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
-            _sha="${_src_base##*-}"
-            if [ "${#_sha}" -ge 7 ]; then
-                printf '%s %s\n' "$_sha" "$(date -Is)" > "$BASE/version"
-            fi
-            ;;
-    esac
-fi
+for cmd in /usr/local/bin/menu /usr/local/bin/ragnar; do
+    ln -sfT "$BASE/menu.sh" "$cmd" || die "Cannot install $cmd"
+done
 
 # ---------------------------------------------------------------------
 # Questions (never prompt interactively during an in-place update)
@@ -86,14 +89,14 @@ fi
 DOMAIN="${RAGNAR_DOMAIN:-}"
 NS="${RAGNAR_NS:-}"
 if [ "$IS_UPDATE" = 1 ]; then
-    if [ -z "$DOMAIN" ] && [ -f "$BASE/settings.json" ] && command -v python3 >/dev/null 2>&1; then
-        DOMAIN=$(python3 -c 'import json; print((json.load(open("/etc/ragnar/settings.json")).get("domain") or "").strip())' 2>/dev/null || true)
+    if [ -z "$DOMAIN" ] && [ -f "$BASE/settings.json" ]; then
+        DOMAIN=$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("domain") or "").strip())' "$BASE/settings.json") || die "Cannot read saved domain"
     fi
     if [ -z "$DOMAIN" ] && [ -f "$BASE/domain" ]; then
         DOMAIN=$(head -n1 "$BASE/domain" 2>/dev/null | tr -d '\r\n' || true)
     fi
-    if [ -z "$NS" ] && [ -f "$BASE/settings.json" ] && command -v python3 >/dev/null 2>&1; then
-        NS=$(python3 -c 'import json; print((json.load(open("/etc/ragnar/settings.json")).get("ns") or "").strip())' 2>/dev/null || true)
+    if [ -z "$NS" ] && [ -f "$BASE/settings.json" ]; then
+        NS=$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("ns") or "").strip())' "$BASE/settings.json") || die "Cannot read saved nameserver"
     fi
 else
     if [ -z "$DOMAIN" ] && [ -t 0 ]; then
@@ -144,19 +147,17 @@ fi
 # Keep a clean persistence baseline before adding panel firewall rules. The
 # package may create rules.v4/rules.v6 during its own setup, so capture those
 # generated defaults too when no file existed before this installation.
-for family in 4 6; do
-    rules_file="/etc/iptables/rules.v${family}"
-    original_file="$RAGNAR_STATE_DIR/original/etc/iptables/rules.v${family}"
-    if [ ! -e "$original_file" ] && [ ! -L "$original_file" ] && [ ! -e "$rules_file" ]; then
+for rules_file in "${new_firewall_files[@]}"; do
+    if [ ! -e "$rules_file" ]; then
         mkdir -p /etc/iptables
         save_bin=iptables-save
-        [ "$family" = 4 ] || save_bin=ip6tables-save
+        [[ "$rules_file" = *.v4 ]] || save_bin=ip6tables-save
         if command -v "$save_bin" >/dev/null 2>&1; then
             tmp="${rules_file}.tmp.$$"
             if "$save_bin" > "$tmp"; then mv -f "$tmp" "$rules_file"; else rm -f "$tmp"; fi
         fi
     fi
-    ragnar_capture_generated_file "$rules_file" || warn "Could not preserve generated firewall baseline: $rules_file"
+    ragnar_capture_generated_file "$rules_file" || die "Cannot preserve generated firewall baseline: $rules_file"
 done
 # NOTE: there is no 'badvpn' package in Ubuntu 24.04 - udpgw is fetched
 # as the upstream prebuilt binary in the UDP Custom section below.
@@ -202,20 +203,14 @@ EOF
 fi
 systemctl enable vnstat >/dev/null 2>&1 || true
 
-[ -n "$PUBIP" ] && echo "$PUBIP" > "$BASE/host"
+if [ -n "$PUBIP" ] && [ ! -s "$BASE/host" ]; then echo "$PUBIP" > "$BASE/host"; fi
 if [ ! -s "$BASE/isp" ]; then
     ISP_NAME=$(curl -s --max-time 4 "https://ipinfo.io/org" 2>/dev/null | sed 's/^AS[0-9]* //' || true)
     [ -n "$ISP_NAME" ] && echo "$ISP_NAME" > "$BASE/isp"
 fi
 [ -n "$DOMAIN" ] && echo "$DOMAIN" > "$BASE/domain"
-python3 - "$DOMAIN" "$NS" <<'PY'
-import json, os, sys
-p = "/etc/ragnar/settings.json"
-s = json.load(open(p)) if os.path.exists(p) else {}
-if sys.argv[1]: s["domain"] = sys.argv[1]
-if sys.argv[2]: s["ns"] = sys.argv[2]
-json.dump(s, open(p, "w"), indent=2)
-PY
+RAGNAR_DIR="$BASE" python3 "$BASE/core/panel-state.py" configure "$DOMAIN" "$NS" "$LEGACY_SLOWDNS" ||
+    die "Cannot update panel settings"
 
 # ---------------------------------------------------------------------
 # Certificates (refresh from Let's Encrypt before preserving local certs)
@@ -257,10 +252,14 @@ else
         openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/privkey.pem" \
             -out "$BASE/certs/fullchain.pem" -days 3650 -nodes \
             -subj "/CN=$HOST_FOR_LINKS" \
-            -addext "subjectAltName=DNS:$HOST_FOR_LINKS,IP:$PUBIP" 2>/dev/null
+            -addext "subjectAltName=DNS:$HOST_FOR_LINKS,IP:$PUBIP" 2>/dev/null || die "Cannot generate TLS certificate"
     fi
 fi
-cat "$BASE/certs/fullchain.pem" "$BASE/certs/privkey.pem" > "$BASE/certs/haproxy.pem"
+bundle=$(mktemp "$BASE/certs/.haproxy.XXXXXX") || die "Cannot stage TLS bundle"
+if ! { cat "$BASE/certs/fullchain.pem" "$BASE/certs/privkey.pem" > "$bundle" && mv -fT "$bundle" "$BASE/certs/haproxy.pem"; }; then
+    rm -f "$bundle"
+    die "Cannot install TLS bundle"
+fi
 chmod 600 "$BASE/certs/"*.pem "$BASE/certs/haproxy.pem"
 mkdir -p /etc/letsencrypt/renewal-hooks/deploy
 ragnar_backup_file /etc/letsencrypt/renewal-hooks/deploy/ragnar-cert-deploy || die "Cannot preserve existing certificate hook"
@@ -268,7 +267,7 @@ install -m 755 "$SRC/core/cert-deploy.sh" /etc/letsencrypt/renewal-hooks/deploy/
 # ZIVPN certificate (its own format/names)
 if [ ! -s "$BASE/certs/zivpn.crt" ] || [ ! -s "$BASE/certs/zivpn.key" ]; then
     openssl req -x509 -newkey rsa:2048 -keyout "$BASE/certs/zivpn.key" \
-        -out "$BASE/certs/zivpn.crt" -days 3650 -nodes -subj "/CN=$HOST_FOR_LINKS" 2>/dev/null
+        -out "$BASE/certs/zivpn.crt" -days 3650 -nodes -subj "/CN=$HOST_FOR_LINKS" 2>/dev/null || die "Cannot generate ZIVPN certificate"
 fi
 
 # ---------------------------------------------------------------------
@@ -495,20 +494,6 @@ if [ "$ARCH" = x86_64 ]; then
         warn "udp-custom download failed"
     fi
 fi
-python3 - <<'PY'
-import json, os
-# Optimized upstream-shaped config: 80 MB receive buffer, big stream buffer,
-# SSH users mirrored as passwords-auth entries (user:pass).
-cfg = {"listen": ":36712", "stream_buffer": 33554432, "receive_buffer": 83886080,
-       "auth": {"mode": "passwords", "config": []}}
-try:
-    ssh = json.load(open("/etc/ragnar/db/ssh.json"))["users"]
-    cfg["auth"]["config"] = [f"{u}:{d['password']}" for u, d in ssh.items()]
-except Exception:
-    pass
-os.makedirs("/etc/ragnar/udp", exist_ok=True)
-json.dump(cfg, open("/etc/ragnar/udp/config.json", "w"), indent=2)
-PY
 ragnar_backup_file /etc/systemd/system/udp-custom.service || die "Cannot preserve existing UDP Custom service"
 cat > /etc/systemd/system/udp-custom.service <<'EOF'
 [Unit]
@@ -592,26 +577,13 @@ fi
 # in /etc/vps-panel/slowdns/ (from the other panel or the earlier
 # verbatim install) so the keypair never changes under an upgrade.
 # ---------------------------------------------------------------------
-python3 - <<'PYEOF2'
-import json, os
-base = "/etc/vps-panel/slowdns"
-p = "/etc/ragnar/settings.json"
-s = json.load(open(p)) if os.path.exists(p) else {}
-def readf(name):
-    fp = os.path.join(base, name)
-    return open(fp).read().strip() if os.path.exists(fp) else ""
-if not s.get("ns") and readf("nameserver"):
-    s["ns"] = readf("nameserver")
-for key, fname in (("slowdns_mtu", "mtu"), ("slowdns_resolver", "dns_resolver"),
-                   ("slowdns_target", "target_port")):
-    if not s.get(key) and readf(fname):
-        v = readf(fname)
-        s[key] = v if key == "slowdns_resolver" else int(v)
-json.dump(s, open(p, "w"), indent=2)
-PYEOF2
 ragnar_backup_file /etc/systemd/system/slowdns.service || die "Cannot preserve existing SlowDNS service"
-RAGNAR_DIR="$BASE" bash "$BASE/core/slowdns-setup.sh" "${NS:-}" "" "" || \
+if ! RAGNAR_DIR="$BASE" bash "$BASE/core/slowdns-setup.sh" "${NS:-}" "" ""; then
+    if [ "$IS_UPDATE" = 1 ] && { [ -n "$NS" ] || [ -s "$BASE/slowdns/server.key" ] || [ -s "$LEGACY_SLOWDNS/server.key" ]; }; then
+        die "Cannot update existing SlowDNS installation"
+    fi
     warn "SlowDNS setup failed - re-run: RAGNAR_DIR=$BASE bash $BASE/core/slowdns-setup.sh"
+fi
 
 # ---------------------------------------------------------------------
 # Cloudflared
@@ -706,7 +678,7 @@ fi
 # ---------------------------------------------------------------------
 # Generate configs + start everything
 # ---------------------------------------------------------------------
-RAGNAR_DIR="$BASE" python3 "$BASE/core/ragnar.py" gen-configs || true
+RAGNAR_DIR="$BASE" python3 "$BASE/core/ragnar.py" gen-configs || die "Cannot generate panel configs"
 # NOTE: do NOT copy the panel config to /usr/local/etc/xray/config.json - that path is the
 # upstream installer's default, and a copy there goes stale the moment a user is added
 # (the panel only regenerates /etc/ragnar/xray/config.json). The drop-in removal above
@@ -732,7 +704,7 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-RAGNAR_DIR="$BASE" python3 "$BASE/web/webpanel.py" --init || true
+RAGNAR_DIR="$BASE" python3 "$BASE/web/webpanel.py" --init || die "Cannot initialize web login"
 
 systemctl daemon-reload
 systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
@@ -745,24 +717,18 @@ for svc in haproxy dropbear ragnar-wsproxy ragnar-landing xray sing-box zivpn \
     systemctl enable "$svc" >/dev/null 2>&1 || true
     systemctl restart "$svc" 2>/dev/null || warn "could not start $svc (check: systemctl status $svc)"
 done
-if [ "$IS_UPDATE" = 1 ]; then
-    python3 - "$BASE/update-status.json" "$BASE/version" <<'PY' 2>/dev/null || true
-import datetime, json, os, sys
-ver = ""
-if os.path.exists(sys.argv[2]):
-    ver = open(sys.argv[2]).read().split()[0]
-data = {
-    "state": "done",
-    "version": ver,
-    "message": f"Updated to {ver[:7] or 'latest'}.",
-    "time": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-}
-with open(sys.argv[1], "w") as fh:
-    json.dump(data, fh, indent=1)
-PY
-fi
 systemctl enable ragnar-web >/dev/null 2>&1 || true
-systemctl restart ragnar-web 2>/dev/null || warn "could not start ragnar-web (check: systemctl status ragnar-web)"
+# The updater publishes its version/status and then restarts the web service.
+# Restarting it here could kill an update launched by the web process.
+if [ "$MANAGED_UPDATE" = 0 ]; then
+    systemctl restart ragnar-web 2>/dev/null || warn "could not start ragnar-web (check: systemctl status ragnar-web)"
+    sha=$(git -C "$SRC" rev-parse HEAD 2>/dev/null) || sha=${SRC##*-}
+    if [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+        version_tmp=$(mktemp "$BASE/.version.XXXXXX") &&
+            printf '%s %s\n' "$sha" "$(date -Is)" > "$version_tmp" &&
+            mv -fT "$version_tmp" "$BASE/version" || die "Cannot record installed version"
+    fi
+fi
 
 cat <<EOF
 

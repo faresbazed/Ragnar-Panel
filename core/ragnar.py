@@ -130,7 +130,8 @@ def _atomic_json(path, rendered, mode=None):
     while True:
         tmp = path + "." + secrets.token_hex(16) + ".tmp"
         try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                         0o666 if mode is None else mode)
             break
         except FileExistsError:
             continue
@@ -146,7 +147,8 @@ def _atomic_json(path, rendered, mode=None):
 
 
 def _write_json(path, data):
-    _atomic_json(path, json.dumps(data, indent=2, sort_keys=True))
+    _atomic_json(path, json.dumps(data, indent=2, sort_keys=True),
+                 mode=0o600 if path == SETTINGS else None)
 
 
 def _write_json_if_changed(path, data):
@@ -158,7 +160,8 @@ def _write_json_if_changed(path, data):
                 return False
     except OSError:
         pass
-    _atomic_json(path, rendered)
+    # Generated daemon configs contain live user credentials.
+    _atomic_json(path, rendered, mode=0o600)
     return True
 
 
@@ -1363,7 +1366,9 @@ def main(argv):
         elif cmd == "set-domain":
             set_domain(args[0]); _p({"ok": True})
         elif cmd == "gen-configs":
-            apply_configs(force_restart=True); _p({"ok": True})
+            with account_lock():
+                apply_configs(force_restart=True)
+            _p({"ok": True})
         elif cmd == "stats":
             _p(stats())
         elif cmd == "online":
