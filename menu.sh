@@ -338,6 +338,13 @@ xray_copy_one() {
     local u; read -rp "Username: " u || return
     xray_link_browser "$u" protocol
 }
+xray_link_caption() {
+    local title=${1%%' ('*} qualifier=${1#*' ('}
+    printf '  %s\n' "${title//  / }"
+    if [[ $title != "$1" ]]; then
+        printf "  ${DIM}%s${N}\n" "${qualifier%')'}"
+    fi
+}
 xray_link_browser() {
     local u=$1 first=$2 context=${3:-Account} catalog route proto item label group last
     local dimension=$first filter='' selected i count=0 answer
@@ -354,7 +361,7 @@ xray_link_browser() {
     fi
     while true; do
         page_header "Connection links" "$context: $u"
-        [[ -z $filter ]] || printf '  %s\n' "$filter"
+        [[ -z $filter ]] || xray_link_caption "$filter"
         choices=(); seen=(); last=''
         while IFS=$'\t' read -r route proto; do
             [[ -n $proto ]] || continue
@@ -414,7 +421,7 @@ xray_link_browser() {
         if [[ $dimension == route ]]; then route=$selected; proto=$filter
         else route=$filter; proto=$selected; fi
         page_header "Copy connection link" "$proto · $u"
-        printf '  %s\n' "$route"
+        xray_link_caption "$route"
         section "PRIVATE LINK"
         python3 "$CORE" xray-links "$u" --one "$route" "$proto"
         printf '\n'
