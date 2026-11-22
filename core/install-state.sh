@@ -24,7 +24,11 @@ ragnar_backup_file() {
         cp -a -- "$path" "$original" || return 1
     fi
     mkdir -p "$(dirname "$marker")" || return 1
-    : > "$marker"
+    if [ -e "$original" ] || [ -L "$original" ]; then
+        printf 'original\n' > "$marker"
+    else
+        : > "$marker"
+    fi
 }
 
 ragnar_capture_generated_file() {
@@ -41,31 +45,49 @@ ragnar_capture_generated_file() {
     fi
     if [ -e "$path" ] || [ -L "$path" ]; then
         mkdir -p "$(dirname "$original")" || return 1
-        cp -a -- "$path" "$original"
+        cp -a -- "$path" "$original" && printf 'original\n' > "$marker"
     fi
 }
 
-ragnar_restore_files() {
-    local marker rel path original failed=0
+ragnar_restore_files() (
+    local marker rel path original parent stage skip list failed=0
     local registered="$RAGNAR_STATE_DIR/registered"
-    [ -d "$registered" ] || return 0
-
+    list=$(mktemp) || return 1
+    trap 'rm -f -- "$list"' EXIT
+    find "$registered" ! -type d -print0 > "$list" || return 1
     while IFS= read -r -d '' marker; do
         rel=${marker#"$registered"/}
         path="/$rel"
-        original="$RAGNAR_STATE_DIR/original/$rel"
-        if [ -d "$path" ] && [ ! -L "$path" ]; then
-            echo "Not replacing directory at managed path: $path" >&2
+        if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+            echo "Invalid installer record: $marker" >&2
             failed=1
             continue
         fi
-        rm -f -- "$path" || { failed=1; continue; }
-        if [ -e "$original" ] || [ -L "$original" ]; then
-            mkdir -p "$(dirname "$path")" && cp -a -- "$original" "$path" || failed=1
+        for skip in "$@"; do
+            [ "$path" != "$skip" ] || continue 2
+        done
+        original="$RAGNAR_STATE_DIR/original/$rel"
+        parent=$(dirname -- "$path")
+        if [ "$(realpath -m -- "$parent")" != "$parent" ] || { [ -d "$path" ] && [ ! -L "$path" ]; }; then
+            echo "Not replacing directory or writing through a linked directory: $path" >&2
+            failed=1
+            continue
         fi
-    done < <(find "$registered" -type f -print0)
+        if [ -f "$original" ] || [ -L "$original" ]; then
+            mkdir -p -- "$parent" && stage=$(mktemp -d -- "$parent/.ragnar-restore.XXXXXX") || { failed=1; continue; }
+            cp -a -- "$original" "$stage/file" && mv -fT -- "$stage/file" "$path" || failed=1
+            rm -rf -- "$stage" || failed=1
+        elif [ -s "$marker" ] || [ -e "$original" ]; then
+            echo "Missing or invalid original for $path" >&2
+            failed=1
+        else
+            # Empty markers from older versions also use the original's
+            # presence to distinguish a backup from a panel-created file.
+            rm -f -- "$path" || failed=1
+        fi
+    done < "$list"
     return "$failed"
-}
+)
 
 # Components the installer itself downloaded (absent before Ragnar) are
 # recorded here so uninstall removes them without touching pre-existing ones.
@@ -79,6 +101,26 @@ ragnar_mark_installed() {
 
 ragnar_was_installed() {
     [ -f "$RAGNAR_STATE_DIR/installed/$1" ]
+}
+
+# udp-custom adds these untagged rules itself. Only compare complete,
+# recognizable specifications; a rule with extra matches is not ours.
+ragnar_udp_custom_rules() (
+    set -o pipefail
+    { iptables -S INPUT && iptables -t nat -S PREROUTING; } | awk '
+        $0 == "-A INPUT -p udp -m udp --dport 36712 -j ACCEPT" ||
+        /^-A PREROUTING( -[di] [[:alnum:].\/:_+-]+)* -p udp -m udp --dport 1:65535 -j DNAT --to-destination :36712$/'
+)
+
+ragnar_capture_udp_custom_rules() {
+    local snapshot="$RAGNAR_STATE_DIR/udp-custom-before" tmp
+    [ ! -e "$snapshot" ] || return 0
+    tmp=$(mktemp -- "$snapshot.XXXXXX") || return 1
+    if ragnar_udp_custom_rules > "$tmp" && mv -T -- "$tmp" "$snapshot"; then
+        return 0
+    fi
+    rm -f -- "$tmp"
+    return 1
 }
 
 ragnar_capture_service_state() {
@@ -108,16 +150,27 @@ ragnar_restore_service_state() {
     [ -f "$snapshot" ] || return 2
     IFS= read -r enabled < "$snapshot" || return 1
     active=$(sed -n '2p' "$snapshot")
+    [ -n "$enabled" ] && [ -n "$active" ] || return 1
     command -v systemctl >/dev/null 2>&1 || return 1
 
+    case "$active" in
+        active|inactive|failed|unknown|activating|deactivating|reloading|refreshing|maintenance) ;;
+        *) echo "Invalid active state in $snapshot" >&2; return 1 ;;
+    esac
     case "$enabled" in
-        enabled|enabled-runtime) systemctl enable "$service" >/dev/null 2>&1 || true ;;
-        disabled|not-found) systemctl disable "$service" >/dev/null 2>&1 || true ;;
-        # Preserve masked/static/indirect units as-is; install.sh cannot
-        # successfully enable a masked unit, and these states are not ours.
+        not-found)
+            # A removed unit is already restored. Packages deliberately
+            # left installed may still provide a unit that must be disabled.
+            [ "$(systemctl show --property=LoadState --value "$service")" != not-found ] || return 0
+            systemctl disable "$service" || return 1 ;;
+        enabled) systemctl enable "$service" || return 1 ;;
+        enabled-runtime) systemctl disable "$service" && systemctl enable --runtime "$service" || return 1 ;;
+        disabled) systemctl disable "$service" || return 1 ;;
+        masked|masked-runtime|static|indirect|alias|linked|linked-runtime|generated|transient|unknown|bad) ;;
+        *) echo "Invalid enablement state in $snapshot" >&2; return 1 ;;
     esac
     case "$active" in
-        active) systemctl start "$service" >/dev/null 2>&1 || true ;;
-        inactive|failed) systemctl stop "$service" >/dev/null 2>&1 || true ;;
+        active) systemctl start "$service" ;;
+        inactive|failed) systemctl stop "$service" ;;
     esac
 }

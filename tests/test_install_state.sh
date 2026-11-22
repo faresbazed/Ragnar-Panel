@@ -61,4 +61,31 @@ ragnar_was_installed xray
 if ragnar_was_installed sing-box; then exit 1; fi
 if ragnar_mark_installed '../escape' 2>/dev/null; then exit 1; fi
 [ ! -e "$RAGNAR_STATE_DIR/escape" ]
+
+ragnar_backup_file "$TMP/etc/protected.conf"
+mkdir "$TMP/etc/protected.conf"
+if ragnar_restore_files; then exit 1; fi
+[ -d "$TMP/etc/protected.conf" ]
+rmdir "$TMP/etc/protected.conf"
+
+# A missing original is not evidence a file was created by Ragnar.
+mv "$RAGNAR_STATE_DIR/original$TMP/etc/existing.conf" "$TMP/saved"
+printf 'live\n' > "$TMP/etc/existing.conf"
+if ragnar_restore_files; then exit 1; fi
+grep -Fqx live "$TMP/etc/existing.conf"
+mv "$TMP/saved" "$RAGNAR_STATE_DIR/original$TMP/etc/existing.conf"
+ragnar_restore_files
+grep -Fqx original "$TMP/etc/existing.conf"
+
+mkdir "$TMP/redirected"
+mv "$TMP/etc" "$TMP/real-etc"
+ln -s "$TMP/redirected" "$TMP/etc"
+printf 'unrelated\n' > "$TMP/redirected/new.conf"
+if ragnar_restore_files; then exit 1; fi
+grep -Fqx unrelated "$TMP/redirected/new.conf"
+
+printf 'enabled\n' > "$RAGNAR_STATE_DIR/services/truncated"
+if ragnar_restore_service_state truncated; then exit 1; fi
+printf 'invalid\nactive\n' > "$RAGNAR_STATE_DIR/services/invalid"
+if ragnar_restore_service_state invalid; then exit 1; fi
 printf 'install-state helper checks passed\n'

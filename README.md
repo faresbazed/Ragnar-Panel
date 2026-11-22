@@ -35,15 +35,28 @@ menu        # or: ragnar
 
 Uninstall from the menu (option **13**) or `sudo bash /etc/ragnar/uninstall.sh`.
 It restores configuration and service state captured before the installer
-changes them, and removes only firewall rules tagged as Ragnar-owned (plus the
-rules udp-custom adds for itself). Xray, sing-box, cloudflared (and a tunnel
-service created from the menu) and the Go toolchain are removed when Ragnar
+changes them, and removes tagged firewall rules and recorded UFW allowances.
+For udp-custom's untagged rules, uninstall only removes recognized rules absent
+from the pre-install snapshot; older installs without this snapshot leave them alone.
+Xray, sing-box, cloudflared (including a tunnel service created from the
+menu) and the Go toolchain are removed when Ragnar
 installed them and the sister panel is not present; components that existed
-before Ragnar and required Debian/Ubuntu packages are left installed. Shared
-SlowDNS data in `/etc/vps-panel/slowdns` is kept for the sister panel. An older install
-may already have overwritten a file before snapshots existed, so that original
-cannot always be reconstructed automatically when upgrading from an older
-release.
+before Ragnar and required Debian/Ubuntu packages are left installed. An independently
+configured cloudflared service keeps its binary. Shared SlowDNS data in
+`/etc/vps-panel/slowdns` is kept for the sister panel.
+
+The current uninstaller requires the private installer records in
+`/var/lib/ragnar-panel` (or the same `RAGNAR_STATE_DIR` used at install).
+It will not guess what to delete on a legacy installation without records.
+If restoration fails, some services may already be stopped: correct the
+reported error and rerun uninstall. The panel and its recovery records are
+kept until restoration succeeds. Linux account removal requires a separate
+confirmation; choosing **no** keeps those accounts but removes the panel database.
+Files overwritten before snapshots existed cannot be reconstructed automatically.
+
+To verify removal without touching live services, run `bash tests/test_uninstall.sh`
+on Linux with unprivileged user namespaces enabled. It runs the uninstaller in
+a temporary chroot with fake accounts, services and firewall commands.
 
 ## Updating
 

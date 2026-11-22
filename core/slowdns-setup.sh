@@ -301,8 +301,9 @@ fi
 if command -v ufw >/dev/null 2>&1; then
     for port in 53/udp 5300/udp; do
         if ! ufw status 2>/dev/null | awk -v spec="$port" '$1 == spec {found=1} END {exit !found}'; then
-            [ -n "${RAGNAR_STATE_DIR:-}" ] && printf '%s\n' "$port" >> "$RAGNAR_STATE_DIR/ufw-added"
-            ufw allow "$port" >/dev/null 2>&1 || true
+            if ufw allow "$port" >/dev/null 2>&1 && [ -n "${RAGNAR_STATE_DIR:-}" ]; then
+                printf '%s\n' "$port" >> "$RAGNAR_STATE_DIR/ufw-added"
+            fi
         fi
     done
 fi
