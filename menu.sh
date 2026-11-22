@@ -323,35 +323,103 @@ xray_create() {
     read -rp "Custom UUID for VLESS/VMess (blank = generate): " custom_uuid
     local -a args=("$u" "${d:-30}" "${q:-0}" "${i:-0}")
     [ -n "$custom_uuid" ] && args+=("$custom_uuid")
-    if python3 "$CORE" xray-add "${args[@]}"; then
-        echo -e "${G}All protocols created together. Links above include direct 80/443 and Cloudflare 80/443.${N}"
+    if python3 "$CORE" xray-add "${args[@]}" --no-links; then
+        xray_link_browser "$u" route "Account created"
+    else
+        pause
     fi
-    pause
 }
 xray_links() {
-    local u; read -rp "Username: " u
-    python3 "$CORE" xray-links "$u"
-    pause
+    local u; read -rp "Username: " u || return
+    xray_link_browser "$u" route
 }
 xray_info() { local u; read -rp "Username: " u; python3 "$CORE" xray-info "$u"; pause; }
 xray_copy_one() {
-    local u proto
-    read -rp "Username: " u
-    page_header "SELECT XRAY LINK" "Choose one protocol link to copy or share."
-    opt 1 "VLESS" ""
-    opt 2 "VMess" ""
-    opt 3 "Trojan" ""
-    opt 4 "Shadowsocks WS" ""
-    opt 5 "AnyTLS" ""
-    opt 0 "Cancel" "Return without displaying links"
-    menu_choice "Protocol:" || return
-    case "$MENU_CHOICE" in
-        1) proto=VLESS ;; 2) proto=VMESS ;; 3) proto=TROJAN ;;
-        4) proto=SSWS ;; 5) proto=ANYTLS ;; 0) return ;;
-        *) invalid_choice; return ;;
-    esac
-    python3 "$CORE" xray-links "$u" | grep -i "^$proto" || echo "No $proto link found for '${u}'."
-    pause
+    local u; read -rp "Username: " u || return
+    xray_link_browser "$u" protocol
+}
+xray_link_browser() {
+    local u=$1 first=$2 context=${3:-Account} catalog route proto item label group last
+    local dimension=$first filter='' selected i count=0 answer
+    local -a choices
+    local -A seen
+    if ! catalog=$(python3 "$CORE" xray-links "$u" --catalog); then
+        printf '%s\n' "$catalog"; pause; return
+    fi
+    while IFS=$'\t' read -r route proto; do
+        [[ -n $proto ]] && ((count+=1))
+    done <<< "$catalog"
+    if (( count == 0 )); then
+        printf '  No connection links available.\n'; pause; return
+    fi
+    while true; do
+        page_header "Connection links" "$context: $u"
+        [[ -z $filter ]] || printf '  %s\n' "$filter"
+        choices=(); seen=(); last=''
+        while IFS=$'\t' read -r route proto; do
+            [[ -n $proto ]] || continue
+            if [[ $dimension == route ]]; then
+                [[ -z $filter || $proto == "$filter" ]] || continue
+                item=$route
+                label=${route%%' ('*}; label=${label//  / }
+                case "$route" in
+                    *' (direct)') group=DIRECT ;;
+                    *' (Cloudflare)') group=CLOUDFLARE ;;
+                    *' (direct, SNI routed)') group='ANYTLS · DIRECT'; label="SNI routed · ${label##*port }" ;;
+                    *' (direct fallback)') group='ANYTLS · DIRECT'; label="Fallback · ${label##*port }" ;;
+                    *) group=ROUTES; label=$route ;;
+                esac
+            else
+                [[ -z $filter || $route == "$filter" ]] || continue
+                item=$proto; group=PROTOCOL
+                case "$proto" in
+                    VMESS) label=VMess ;; TROJAN) label=Trojan ;; ANYTLS) label=AnyTLS ;;
+                    SSWS) label="Shadowsocks WS" ;; *) label=$proto ;;
+                esac
+            fi
+            [[ ${seen[$item]:-} ]] && continue
+            seen[$item]=1; choices+=("$item")
+            [[ $last == "$group" ]] || section "$group"
+            opt "${#choices[@]}" "$label"
+            last=$group
+        done <<< "$catalog"
+        printf '\n'
+        [[ -n $filter ]] || opt A "Reveal all $count links"
+        opt 0 "Back"
+        if [[ -z $filter ]]; then menu_choice "Choose a $dimension:" || return
+        else menu_choice "Reveal which $dimension?" || return; fi
+        case "$MENU_CHOICE" in
+            0)
+                [[ -n $filter ]] || return 0
+                filter=''; dimension=$first; continue ;;
+            A|a)
+                if [[ -z $filter ]]; then
+                    read -rp "Print all private links? [y/N] " answer || return
+                    case "$answer" in
+                        y|Y) python3 "$CORE" xray-links "$u"; pause ;;
+                    esac
+                    continue
+                fi ;;
+        esac
+        selected=''
+        for i in "${!choices[@]}"; do
+            [[ $MENU_CHOICE == "$((i+1))" ]] && selected=${choices[i]}
+        done
+        if [[ -z $selected ]]; then invalid_choice; continue; fi
+        if [[ -z $filter ]]; then
+            filter=$selected
+            if [[ $dimension == route ]]; then dimension=protocol; else dimension=route; fi
+            continue
+        fi
+        if [[ $dimension == route ]]; then route=$selected; proto=$filter
+        else route=$filter; proto=$selected; fi
+        page_header "Copy connection link" "$proto · $u"
+        printf '  %s\n' "$route"
+        section "PRIVATE LINK"
+        python3 "$CORE" xray-links "$u" --one "$route" "$proto"
+        printf '\n'
+        pause
+    done
 }
 xray_edit() {
     local u what v
@@ -368,11 +436,11 @@ xray_edit() {
     menu_choice "Select an option:" || return
     what=$MENU_CHOICE
     case $what in
-        1) read -rp "Add how many days? " v; python3 "$CORE" xray-edit "$u" --days "$v" --extend ;;
-        2) read -rp "New quota GB (0=inf): " v; python3 "$CORE" xray-edit "$u" --quota-gb "$v" ;;
-        3) read -rp "New IP limit (0=inf): " v; python3 "$CORE" xray-edit "$u" --ip-limit "$v" ;;
-        4) python3 "$CORE" xray-edit "$u" --enable ;;
-        5) python3 "$CORE" xray-edit "$u" --disable ;;
+        1) read -rp "Add how many days? " v; python3 "$CORE" xray-edit "$u" --days "$v" --extend --no-links ;;
+        2) read -rp "New quota GB (0=inf): " v; python3 "$CORE" xray-edit "$u" --quota-gb "$v" --no-links ;;
+        3) read -rp "New IP limit (0=inf): " v; python3 "$CORE" xray-edit "$u" --ip-limit "$v" --no-links ;;
+        4) python3 "$CORE" xray-edit "$u" --enable --no-links ;;
+        5) python3 "$CORE" xray-edit "$u" --disable --no-links ;;
         0) return ;;
         *) invalid_choice; return ;;
     esac
@@ -402,8 +470,8 @@ xray_menu() {
         opt 4 "Delete account" "Remove a user from all protocols"
         opt 5 "Account details" "Usage, limits and live traffic"
         section "SHARE & SERVICE"
-        opt 6 "Show all links" "Display links for every enabled protocol"
-        opt 7 "Show one protocol link" "VLESS, VMess, Trojan, SSWS or AnyTLS"
+        opt 6 "Browse links" "Choose a route first"
+        opt 7 "Find by protocol" "Choose a protocol first"
         opt 8 "Service status" "Xray, sing-box and HAProxy front door"
         opt 0 "Back" "Return to the dashboard"
         menu_choice "Select an option:" || return
@@ -758,6 +826,8 @@ status_page() {
 }
 
 # ---------------------------------------------------------------------
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
+
 if [ "${RAGNAR_PREVIEW:-}" = "1" ]; then
     print_header; main_menu; exit 0
 fi

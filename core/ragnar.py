@@ -1214,7 +1214,7 @@ def fmt_xray_info(name):
         ("IP limit", _istr(u["ip_limit"])),
         ("Activity", active),
         ("Status", "active" if u.get("enabled", True) else "DISABLED"),
-        ("Links", "Xray menu -> Show links"),
+        ("Links", "Xray menu -> Browse links"),
     ])
 
 
@@ -1257,6 +1257,9 @@ def main(argv):
         return 1
     cmd, args = argv[0], argv[1:]
     try:
+        hide_links = cmd in ("xray-add", "xray-edit") and args[-1:] == ["--no-links"]
+        if hide_links:
+            args = args[:-1]
         if cmd == "ssh-add":
             u, p, d, q, i = args[0], args[1], int(args[2]), float(args[3]), int(args[4])
             rec = ssh_add(u, p, d, q, i)
@@ -1298,7 +1301,9 @@ def main(argv):
             i = int(args[3]) if len(args) > 3 else 0
             custom_uuid = args[4] if len(args) > 4 else None
             xray_add(name, d, q, i, custom_uuid); apply_configs()
-            print(f"Xray user '{name}' created.\n\n{fmt_links(name)}")
+            print(f"Xray user '{name}' created.")
+            if not hide_links:
+                print(f"\n{fmt_links(name)}")
         elif cmd == "xray-edit":
             kw = {}
             i = 1
@@ -1315,7 +1320,9 @@ def main(argv):
                 else:
                     i += 1
             xray_edit(args[0], **kw); apply_configs()
-            print(f"Xray user '{args[0]}' saved.\n\n{fmt_links(args[0])}")
+            print(f"Xray user '{args[0]}' saved.")
+            if not hide_links:
+                print(f"\n{fmt_links(args[0])}")
         elif cmd == "xray-del":
             xray_del(args[0]); apply_configs()
             print(f"Xray user '{args[0]}' deleted.")
@@ -1323,7 +1330,23 @@ def main(argv):
             data = _list_rows("xray")
             _p(data) if "--json" in args else print(fmt_users(data, "XRAY USERS"))
         elif cmd == "xray-links":
-            _p(links_for(args[0])) if "--json" in args[1:] else print(fmt_links(args[0]))
+            if args[1:] == ["--catalog"]:
+                for route, protocols in links_for(args[0]).items():
+                    for proto in protocols:
+                        print(f"{route}\t{proto}")
+            elif args[1:2] == ["--one"]:
+                if len(args) != 4:
+                    raise ValueError("Use --one ROUTE PROTOCOL")
+                link = (links_for(args[0]).get(args[2]) or {}).get(args[3])
+                if not link:
+                    raise ValueError("No link for this route and protocol")
+                print(link)
+            elif "--json" in args[1:]:
+                _p(links_for(args[0]))
+            elif not args[1:]:
+                print(fmt_links(args[0]))
+            else:
+                raise ValueError("Unknown link display option")
         elif cmd == "xray-info":
             if "--json" in args[1:]:
                 _p(load_xray()[args[0]])

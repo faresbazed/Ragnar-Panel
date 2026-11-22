@@ -135,6 +135,11 @@ canonical RFC 4122 UUID can be supplied for VLESS/VMess; leave it blank for
 automatic generation. Custom UUIDs must be valid and not already assigned to
 another Xray user.
 
+In **Xray accounts**, **Browse links** groups routes by Direct, Cloudflare
+and AnyTLS. **Find by protocol** starts with the client protocol instead.
+Choose a route and protocol to print one complete URI on its own line.
+**Reveal all links** requires confirmation: these links contain credentials.
+
 ### Cloudflared
 Menu **11**: set the domain, set the hostname used in Cloudflare links,
 install a named-tunnel token, or start a quick trycloudflare tunnel.
