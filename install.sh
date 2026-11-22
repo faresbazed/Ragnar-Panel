@@ -51,7 +51,7 @@ ragnar_state_init || die "Cannot create installer state directory"
 for svc in haproxy dropbear vnstat netfilter-persistent masterdnsvpn xray sing-box zivpn udp-custom badvpn-udpgw udpgw \
            slowdns ragnar-wsproxy ragnar-landing ragnar-check.timer \
            ragnar-watchdog.timer ragnar-web; do
-    ragnar_capture_service_state "$svc" || die "Cannot preserve prior service state for $svc"
+    ragnar_capture_service_state "$svc" || warn "Could not record prior state for $svc"
 done
 # iptables-persistent saves the whole host ruleset; keep the existing saved
 # rules so uninstall can restore them instead of leaving Ragnar's snapshot.
