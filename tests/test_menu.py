@@ -22,6 +22,7 @@ PAGES = {
     "tools": ("tools_menu", "Tools & diagnostics"),
     "health": ("status_page", "Status & health"),
     "update": ("update_panel", "Update panel"),
+    "appearance": ("theme_menu", "Appearance"),
 }
 FIXTURE = """
 source "$MENU"
@@ -52,7 +53,8 @@ class MenuTests(unittest.TestCase):
         self.base = Path(tmp.name)
         self.bin = self.base / "bin"
         self.bin.mkdir()
-        for cmd in ("bash", "cat", "dirname", "grep", "python3", "stty", "tput"):
+        for cmd in ("bash", "cat", "dirname", "grep", "mkdir", "mktemp", "mv",
+                    "python3", "readlink", "rm", "stty", "tput"):
             (self.bin / cmd).symlink_to(shutil.which(cmd))
         self.core = self.base / "core"
         self.core.mkdir()
@@ -72,10 +74,13 @@ if __name__ == '__main__':
 """)
         (self.base / "host").write_text("192.0.2.10\n")
         (self.base / "settings.json").write_text(json.dumps(SETTINGS))
+        self.config = self.base / "config"
+        self.preference = self.config / "ragnar/terminal-theme"
 
-    def render(self, page, width, tty=False, no_color=False):
+    def render(self, page, width, tty=False, no_color=False, keys="0\n", **overrides):
         env = {"TERM": "xterm-256color", "LC_ALL": "C.UTF-8", "PATH": str(self.bin),
-               "MENU": str(ROOT / "menu.sh"), "RAGNAR_DIR": str(self.base), "COLUMNS": str(width)}
+               "MENU": str(ROOT / "menu.sh"), "RAGNAR_DIR": str(self.base), "COLUMNS": str(width),
+               "XDG_CONFIG_HOME": str(self.config), **overrides}
         if no_color:
             env["NO_COLOR"] = "1"
         command = FIXTURE + PAGES[page][0]
@@ -85,7 +90,7 @@ if __name__ == '__main__':
             # Width comes from a real pty in this variant, not $COLUMNS.
             command = f"stty cols {width}; unset COLUMNS; " + command
             args = [shutil.which("script"), "-qec", command, "/dev/null"]
-        p = subprocess.run(args, input="0\n", env=env, capture_output=True, text=True, timeout=5)
+        p = subprocess.run(args, input=keys, env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertFalse(p.stderr, p.stderr)
         return p.stdout
@@ -124,6 +129,47 @@ if __name__ == '__main__':
         self.assertIn("Optional Cloudflare DNS records", wide)
         self.assertNotIn("Optional Cloudflare DNS records", phone)
         self.assertNotIn("\x1b", self.render("slowdns", 40, tty=True, no_color=True))
+
+    def test_select_persist_and_restore_theme(self):
+        self.assertIn("Default [current]", self.render("appearance", 40))
+        self.assertFalse(self.preference.exists())
+        for key, theme, background in [(2, "orchid", "27;16;34"), (3, "evergreen", "13;28;23"),
+                                       (4, "cobalt", "11;23;48"), (5, "parchment", "232;220;195")]:
+            with self.subTest(theme=theme):
+                picker = self.render("appearance", 40, tty=True, keys=f"{key}\nb\n", COLORTERM="truecolor")
+                self.assertIn(f"{theme.title()} [current]", ANSI.sub("", picker))
+                self.assertEqual(self.preference.read_text(), theme + "\n")
+                page = self.render("slowdns", 40, tty=True, COLORTERM="truecolor")
+                self.assertIn(f"\x1b[48;2;{background}m", page)
+                self.assertIn("PACKET PATH", page)
+        self.assertIn("Default [current]", self.render("appearance", 40, keys="1\n0\n"))
+        restored = self.render("dashboard", 80, tty=True)
+        self.assertIn("\x1b[36m", restored)
+        self.assertNotIn("\x1b[48;", restored)
+
+    def test_theme_capabilities_and_plain_output(self):
+        self.render("appearance", 80, keys="4\n0\n")
+        self.assertIn("\x1b[48;5;", self.render("slowdns", 40, tty=True))
+        basic = self.render("slowdns", 40, tty=True, TERM="xterm")
+        self.assertIn("\x1b[40m", basic)
+        self.assertNotIn("\x1b[48;", basic)
+        self.assertNotIn("\x1b", self.render("slowdns", 40))
+        self.assertNotIn("\x1b", self.render("slowdns", 40, tty=True, no_color=True))
+        self.assertNotIn("\x1b", self.render("slowdns", 40, tty=True, TERM="dumb"))
+        self.preference.write_text("not a theme\n")
+        self.assertIn("Default [current]", self.render("appearance", 40))
+
+    def test_unwritable_preference_is_session_only(self):
+        self.config.touch()
+        picker = self.render("appearance", 80, keys="5\n0\n")
+        self.assertIn("Parchment [current]", picker)
+        self.assertIn("Applied for this session only", picker)
+        self.assertIn("Default [current]", self.render("appearance", 80))
+
+    def test_symlink_finds_theme_code_next_to_menu(self):
+        link = self.bin / "menu"
+        link.symlink_to(ROOT / "menu.sh")
+        self.assertIn("Orchid [current]", self.render("appearance", 40, keys="2\n0\n", MENU=str(link)))
 
 
 if __name__ == "__main__":

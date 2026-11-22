@@ -5,17 +5,16 @@
 # Channel  : https://t.me/ragnaresim
 # =====================================================================
 RAGNAR_DIR="${RAGNAR_DIR:-/etc/ragnar}"
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+menu_path=${BASH_SOURCE[0]}
+if [[ -L $menu_path ]]; then menu_path=$(readlink -f -- "$menu_path"); fi
+DIR="$(cd "$(dirname "$menu_path")" && pwd)"
 CORE="${RAGNAR_CORE:-$RAGNAR_DIR/core/ragnar.py}"
 [ -f "$CORE" ] || CORE="$DIR/core/ragnar.py"
 export RAGNAR_DIR
 
 # ---- terminal UI -----------------------------------------------------
-C=''; B=''; DIM=''; G=''; Y=''; R=''; N=''; BADGE=''
-if [[ -t 1 && -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
-    C=$'\e[36m'; B=$'\e[1m'; DIM=$'\e[90m'; G=$'\e[32m'
-    Y=$'\e[33m'; R=$'\e[31m'; N=$'\e[0m'; BADGE=$'\e[7;36m'
-fi
+source "$DIR/core/terminal-theme.sh" || { return 1 2>/dev/null || exit 1; }
+theme_load
 
 term_width() {
     local width=${COLUMNS:-}
@@ -53,6 +52,7 @@ section() {
 masthead() {
     local title=$1 host=$2 brand='VPS CONSOLE'
     UI_COLS=$(term_width)
+    printf '%s' "$CANVAS"
     clear_screen
     printf '  %s RAGNAR %s  %s%s%s' "$BADGE" "$N" "$DIM" "$brand" "$N"
     if (( 26 + ${#host} <= UI_COLS )); then
@@ -296,6 +296,7 @@ main_menu() {
     opt 11 "Clear RAM cache" "Drop Linux filesystem caches"
     opt 12 "Reboot VPS" "Restart the whole server" warn
     opt 13 "Uninstall panel" "Restore snapshots and remove Ragnar" warn
+    opt t "Appearance" "Choose a terminal theme"
     opt x "Exit" "Leave this menu"
     paragraph "@farisbazed · https://t.me/ragnaresim" "$DIM"
 }
@@ -921,6 +922,7 @@ status_page() {
 # ---------------------------------------------------------------------
 [[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
 
+trap theme_reset_terminal EXIT
 if [ "${RAGNAR_PREVIEW:-}" = "1" ]; then
     print_header; main_menu; exit 0
 fi
@@ -947,7 +949,8 @@ while true; do
                 # The menu's own files are gone; do not keep drawing it.
                 [ -d "$RAGNAR_DIR" ] || exit 0
             fi ;;
-        x|X) clear_screen; echo "Bye - @farisbazed / https://t.me/ragnaresim"; exit 0 ;;
+        t|T) theme_menu ;;
+        x|X) theme_reset_terminal; clear_screen; echo "Bye - @farisbazed / https://t.me/ragnaresim"; exit 0 ;;
         *) invalid_choice ;;
     esac
 done
