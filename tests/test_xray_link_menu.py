@@ -64,6 +64,13 @@ class TestXrayLinkMenu(unittest.TestCase):
         out = self.menu("xray_links", "demo\na\ny\n\n0\n")
         self.assertIn(self.core("xray-links", "demo"), out)
 
+    def test_long_route_context_stays_on_short_lines(self):
+        out = self.menu("xray_links", "demo\n5\n1\n\n0\n0\n")
+        caption = "\n  AnyTLS · port 443\n  direct, SNI routed\n"
+        self.assertIn(caption, out.split("Copy connection link")[0])
+        self.assertIn(caption, out.split("Copy connection link")[1])
+        self.assertNotIn("AnyTLS · port 443 (direct, SNI routed)", out)
+
     def test_add_and_edit_do_not_dump_links(self):
         out = self.menu("xray_create", "new-user\n30\n0\n0\n\n0\n")
         self.assertIn("Account created: new-user", out)
