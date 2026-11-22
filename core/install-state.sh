@@ -124,12 +124,16 @@ ragnar_capture_udp_custom_rules() {
 }
 
 ragnar_capture_service_state() {
-    local service="$1" snapshot enabled active
+    local service="$1" snapshot enabled active unit
     case "$service" in
         *[!A-Za-z0-9_.@:-]*|"") return 2 ;;
     esac
     snapshot="$RAGNAR_STATE_DIR/services/$service"
     [ -f "$snapshot" ] && return 0
+    # Older installs registered some unit files without a service snapshot.
+    # Their current enablement/activity is Ragnar's, not the host baseline.
+    case "$service" in *.service|*.timer) unit=$service ;; *) unit=$service.service ;; esac
+    [ ! -f "$RAGNAR_STATE_DIR/registered/etc/systemd/system/$unit" ] || return 0
 
     if command -v systemctl >/dev/null 2>&1; then
         enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)

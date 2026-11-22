@@ -78,10 +78,14 @@ run n
 units=/etc/systemd/system
 sd=/etc/vps-panel/slowdns
 mkdir -p "$units" "$sd" /usr/local/{bin,go-1.22,share/vps-panel} /etc/{security,iptables}
-for path in /usr/local/bin/menu "$sd/server.key" "$units/ragnar-web.service" "$units/udp-custom.service"; do
+for path in /usr/local/bin/menu "$sd/server.key" "$units/ragnar-web.service" "$units/udp-custom.service" "$units/ragnar-check.service"; do
     ragnar_backup_file "$path"
     echo new > "$path"
 done
+# An existing installation that predates checker activity snapshots does
+# not acquire a bogus baseline from the running panel on its next install.
+ragnar_capture_service_state ragnar-check
+[ ! -e "$state/services/ragnar-check" ]
 ln -s original-menu /usr/local/bin/ragnar
 ragnar_backup_file /usr/local/bin/ragnar
 rm /usr/local/bin/ragnar; touch /usr/local/bin/ragnar
@@ -135,6 +139,7 @@ run $'y\ny'
 [ "$(readlink /usr/local/bin/ragnar)" = original-menu ]
 [ ! -e /usr/local/bin/menu ]
 [ ! -e "$units/ragnar-web.service" ]
+[ ! -e "$units/ragnar-check.service" ]
 [ "$(cat "$units/xray.timer")" = 'not managed' ]
 [ "$(cat /usr/local/bin/zivpn)" = 'not managed' ]
 [ "$(cat "$sd/server.key")" = new ]
