@@ -2,6 +2,11 @@
 # Presentation only: never source the user's saved preference.
 THEMES=(default orchid evergreen cobalt parchment)
 THEME_HINTS=("Terminal colors" "Plum and lilac" "Pine and sage" "Midnight and blue" "Warm paper and ink")
+LAYOUTS=(classic boxed compact ledger)
+LAYOUT_HINTS=("Original hairline view" "Rounded card panels" "Two-column split HUD" "Double-ruled console")
+LAYOUT=classic
+LAYOUT_FILE=''
+UI_BOX_OPEN=0
 
 # Each role has an RGB hex value, an xterm palette index and a basic ANSI index.
 theme_color() {
@@ -49,6 +54,33 @@ theme_apply() {
     BADGE="$C"$'\e[7m'
 }
 
+layout_apply() {
+    case "$1" in
+        classic|boxed|compact|ledger) LAYOUT=$1 ;;
+        *) LAYOUT=classic ;;
+    esac
+}
+
+layout_load() {
+    local saved='' config=${XDG_CONFIG_HOME:-}
+    LAYOUT_FILE=''
+    if [[ $config != /* && ${HOME:-} == /* ]]; then config=$HOME/.config; fi
+    if [[ $config == /* ]]; then
+        LAYOUT_FILE=$config/ragnar/terminal-layout
+        if [[ -f $LAYOUT_FILE && -r $LAYOUT_FILE ]]; then IFS= read -r saved < "$LAYOUT_FILE" || :; fi
+    fi
+    layout_apply "$saved"
+}
+
+layout_save() {
+    local tmp
+    [[ -n $LAYOUT_FILE ]] || return 1
+    mkdir -p -- "${LAYOUT_FILE%/*}" && tmp=$(mktemp -- "${LAYOUT_FILE}.XXXXXX") || return 1
+    if printf '%s\n' "$1" > "$tmp" && mv -fT -- "$tmp" "$LAYOUT_FILE"; then return 0; fi
+    rm -f -- "$tmp"
+    return 1
+}
+
 theme_load() {
     local saved='' colors config=${XDG_CONFIG_HOME:-}
     THEME_FILE=''; COLOR_MODE=none
@@ -66,6 +98,7 @@ theme_load() {
         esac
     fi
     theme_apply "$saved"
+    layout_load
 }
 
 theme_save() {
@@ -80,34 +113,86 @@ theme_save() {
 theme_reset_terminal() { [[ -z $CANVAS ]] || printf '\e[0m'; }
 
 theme_option() (
-    local outer=$N active=$THEME key=$1 slug=$2 hint=$3 label=${2^}
+    local outer=$N outer_dim=$DIM active=$THEME key=$1 slug=$2 hint=$3 label=${2^}
+    local inner vis pad
     theme_apply "$slug"
     [[ $slug != "$active" ]] || label+=' [current]'
+    if [[ $LAYOUT == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+        inner=$((UI_COLS - 4))
+        printf '%s│%s %s%s %s %s  %s' "$outer_dim" "$outer" "$N" "$BADGE" "$key" "$outer" "$label"
+        vis=$((5 + ${#label}))
+        if (( UI_COLS >= 58 && 27 + ${#hint} <= inner )); then
+            printf '%*s%s%s%s' "$((22 - ${#label}))" '' "$outer_dim" "$hint" "$outer"
+            vis=$((27 + ${#hint}))
+        fi
+        pad=$((inner - vis))
+        (( pad > 0 )) && printf '%*s' "$pad" ''
+        printf ' %s│%s\n' "$outer_dim" "$outer"
+        return 0
+    fi
     printf '  %s%s %s %s  %s' "$N" "$BADGE" "$key" "$outer" "$label"
     if (( UI_COLS >= 50 )); then printf '%*s%s' "$((22 - ${#label}))" '' "$hint"; fi
     printf '\n'
 )
 
+layout_option() {
+    local key=$1 slug=$2 hint=$3 label=${2^}
+    [[ $slug != "$LAYOUT" ]] || label+=' [current]'
+    opt "$key" "$label" "$hint"
+}
+
+layout_menu() {
+    local i selected message=''
+    while true; do
+        page_header "Panel layout" "Choose a terminal panel design."
+        section "DESIGNS"
+        for i in "${!LAYOUTS[@]}"; do
+            layout_option "$((i + 1))" "${LAYOUTS[i]}" "${LAYOUT_HINTS[i]}"
+        done
+        opt 0 "Back" "Return to the dashboard"
+        [[ -z $message ]] || paragraph "$message" "$Y"
+        menu_choice "Select a layout:" || return
+        case "$MENU_CHOICE" in
+            0) return ;;
+            [1-4]) selected=${LAYOUTS[MENU_CHOICE-1]} ;;
+            *) invalid_choice; continue ;;
+        esac
+        message=''
+        layout_save "$selected" 2>/dev/null || message="Applied for this session only. Could not save preference."
+        layout_apply "$selected"
+    done
+}
+
 theme_menu() {
     local i selected message=''
     while true; do
-        page_header "Appearance" "Choose a terminal theme."
+        page_header "Appearance" "Choose a terminal theme and layout."
         section "COLOR PALETTES"
         for i in "${!THEMES[@]}"; do
             theme_option "$((i + 1))" "${THEMES[i]}" "${THEME_HINTS[i]}"
         done
+        section "PANEL LAYOUTS"
+        for i in "${!LAYOUTS[@]}"; do
+            layout_option "$((i + 6))" "${LAYOUTS[i]}" "${LAYOUT_HINTS[i]}"
+        done
         opt 0 "Back" "Return to the dashboard"
         [[ $COLOR_MODE != none ]] || paragraph "Color is off for this terminal." "$DIM"
         [[ -z $message ]] || paragraph "$message" "$Y"
-        menu_choice "Select a theme:" || return
+        menu_choice "Select a theme or layout:" || return
         case "$MENU_CHOICE" in
             0) return ;;
-            [1-5]) selected=${THEMES[MENU_CHOICE-1]} ;;
+            [1-5])
+                selected=${THEMES[MENU_CHOICE-1]}
+                message=''
+                theme_save "$selected" 2>/dev/null || message="Applied for this session only. Could not save preference."
+                theme_reset_terminal
+                theme_apply "$selected" ;;
+            [6-9])
+                selected=${LAYOUTS[MENU_CHOICE-6]}
+                message=''
+                layout_save "$selected" 2>/dev/null || message="Applied for this session only. Could not save preference."
+                layout_apply "$selected" ;;
             *) invalid_choice; continue ;;
         esac
-        message=''
-        theme_save "$selected" 2>/dev/null || message="Applied for this session only. Could not save preference."
-        theme_reset_terminal
-        theme_apply "$selected"
     done
 }

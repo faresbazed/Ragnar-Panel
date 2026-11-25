@@ -346,12 +346,23 @@ ICONS = {
     "check": '<path d="m5 12 5 5L20 7"/>',
     "alert": '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
     "palette": '<path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.5 1.5 0 0 1 1.1-2.6H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8Z"/><path d="M7.5 11h.01M10 7.5h.01M14.5 7.5h.01M17 11h.01" stroke-width="2.5"/>',
+    "layout": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
 }
 
 THEMES = ("dark", "light", "orchid", "evergreen", "cobalt", "parchment")
+LAYOUTS = ("classic", "sidebar", "bento", "console")
+LAYOUT_LABELS = {
+    "classic": "Classic",
+    "sidebar": "Sidebar",
+    "bento": "Bento",
+    "console": "Console",
+}
 PAGE_HEAD = (
-    "<script>(function(){try{var t=localStorage.getItem('ragnar-theme');"
+    "<script>(function(){try{"
+    "var t=localStorage.getItem('ragnar-theme');"
     f"if({json.dumps(THEMES)}.includes(t))document.documentElement.setAttribute('data-theme',t);"
+    "var l=localStorage.getItem('ragnar-layout');"
+    f"if({json.dumps(LAYOUTS)}.includes(l))document.documentElement.setAttribute('data-layout',l);"
     "}catch(e){}})();</script>"
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
@@ -375,6 +386,15 @@ def theme_picker():
     return (f'<span class="theme-picker">{icon("palette")}'
             '<select id="theme-select" aria-label="Color theme" title="Color theme" '
             f'onchange="setTheme(this.value)">{options}</select></span>')
+
+
+def layout_picker():
+    options = "".join(
+        f'<option value="{lay}">{LAYOUT_LABELS[lay]}</option>' for lay in LAYOUTS
+    )
+    return (f'<span class="theme-picker layout-picker">{icon("layout")}'
+            '<select id="layout-select" aria-label="Panel layout" title="Panel layout" '
+            f'onchange="setLayout(this.value)">{options}</select></span>')
 
 
 CSS = """
@@ -1456,6 +1476,719 @@ input:focus, select:focus {
   .card .v { font-size: 18px; }
   .logout-link span { display: none; }
 }
+
+.login-head-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.login-pickers {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* =====================================================================
+ * Layout 1: Sidebar Rail (Left docked sidebar + two-column split dashboard)
+ * ===================================================================== */
+html[data-layout="sidebar"] body.app-body {
+  padding-left: 256px;
+  background-image: radial-gradient(ellipse 65% 480px at 260px -80px, var(--bg-wash), transparent 72%);
+}
+html[data-layout="sidebar"] .topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 256px;
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 0;
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+html[data-layout="sidebar"] .topbar-inner {
+  height: 100%;
+  max-width: none;
+  padding: 20px 14px 18px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 16px;
+  overflow-y: auto;
+}
+html[data-layout="sidebar"] .brand {
+  padding: 4px 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+html[data-layout="sidebar"] .nav {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+html[data-layout="sidebar"] .nav a {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border-left: 3px solid transparent;
+  font-size: 13.5px;
+}
+html[data-layout="sidebar"] .nav a:hover {
+  background: var(--surface-2);
+}
+html[data-layout="sidebar"] .nav a.on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-left-color: var(--accent);
+  box-shadow: none;
+}
+html[data-layout="sidebar"] .topbar-utils {
+  margin-top: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+html[data-layout="sidebar"] .topbar-utils .theme-picker,
+html[data-layout="sidebar"] .topbar-utils .theme-picker select,
+html[data-layout="sidebar"] .topbar-utils .logout-link {
+  width: 100%;
+  border-radius: 9px;
+}
+html[data-layout="sidebar"] .topbar-utils .logout-link {
+  justify-content: center;
+  padding: 8px 12px;
+}
+html[data-layout="sidebar"] .main {
+  max-width: 1480px;
+  padding: 26px clamp(18px, 2.8vw, 36px) 56px;
+}
+html[data-layout="sidebar"] .page-heading {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  margin-bottom: 20px;
+  box-shadow: var(--specular), var(--shadow-sm);
+}
+html[data-layout="sidebar"] .node-strip {
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+}
+html[data-layout="sidebar"] .dash-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.38fr) minmax(300px, 0.92fr);
+  gap: 20px;
+  align-items: start;
+}
+html[data-layout="sidebar"] .dash-metrics .cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 0;
+}
+html[data-layout="sidebar"] .metric-card {
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+  padding: 15px 17px;
+}
+html[data-layout="sidebar"] .dash-services .section-heading {
+  margin-top: 0;
+}
+html[data-layout="sidebar"] .dash-services .tblwrap {
+  border-radius: 10px;
+}
+html[data-layout="sidebar"] .dash-services .svc-table {
+  min-width: 0;
+}
+html[data-layout="sidebar"] .dash-services .svc-table th,
+html[data-layout="sidebar"] .dash-services .svc-table td {
+  padding: 10px 13px;
+  font-size: 13px;
+}
+html[data-layout="sidebar"] .composer-card {
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+}
+html[data-layout="sidebar"] .addform > div:has(.pw-group) {
+  flex: 1.6 1 230px;
+}
+html[data-layout="sidebar"] th,
+html[data-layout="sidebar"] td {
+  padding: 11px 12px;
+  font-size: 13px;
+}
+html[data-layout="sidebar"] .tblwrap,
+html[data-layout="sidebar"] .card {
+  border-radius: 10px;
+}
+html[data-layout="sidebar"] body.login-body .login-shell {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+}
+html[data-layout="sidebar"] body.login-body .login-split {
+  width: 100%;
+  min-height: 100vh;
+  grid-template-columns: minmax(320px, 42%) 1fr;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+html[data-layout="sidebar"] body.login-body .login-showcase {
+  padding: clamp(32px, 5vw, 64px);
+}
+html[data-layout="sidebar"] body.login-body .login-card {
+  max-width: 480px;
+  width: 100%;
+  margin: auto;
+  padding: 44px 36px;
+}
+
+@media (max-width: 1180px) {
+  html[data-layout="sidebar"] .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 960px) {
+  html[data-layout="sidebar"] body.app-body {
+    padding-left: 0;
+  }
+  html[data-layout="sidebar"] .topbar {
+    position: sticky;
+    width: auto;
+    height: auto;
+    bottom: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  html[data-layout="sidebar"] .topbar-inner {
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    gap: 12px;
+  }
+  html[data-layout="sidebar"] .brand {
+    padding: 0;
+    border-bottom: 0;
+  }
+  html[data-layout="sidebar"] .nav {
+    order: 3;
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  html[data-layout="sidebar"] .nav a {
+    width: auto;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    padding: 7px 12px;
+  }
+  html[data-layout="sidebar"] .nav a.on {
+    border-bottom-color: var(--accent);
+  }
+  html[data-layout="sidebar"] .topbar-utils {
+    margin-top: 0;
+    flex-direction: row;
+    align-items: center;
+    padding-top: 0;
+    border-top: 0;
+  }
+  html[data-layout="sidebar"] .topbar-utils .theme-picker,
+  html[data-layout="sidebar"] .topbar-utils .theme-picker select,
+  html[data-layout="sidebar"] .topbar-utils .logout-link {
+    width: auto;
+  }
+}
+@media (max-width: 760px) {
+  html[data-layout="sidebar"] body.login-body .login-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =====================================================================
+ * Layout 2: Bento Studio (Floating pill dock + asymmetric Bento mosaic)
+ * ===================================================================== */
+html[data-layout="bento"] {
+  --radius-xs: 12px;
+  --radius-sm: 16px;
+  --radius: 22px;
+  --radius-lg: 28px;
+}
+html[data-layout="bento"] .topbar {
+  position: sticky;
+  top: 14px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 0;
+  padding: 0 clamp(14px, 3vw, 36px);
+}
+html[data-layout="bento"] .topbar-inner {
+  max-width: 1320px;
+  padding: 9px 14px 9px 16px;
+  background: var(--topbar-bg);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--specular), var(--shadow);
+}
+html[data-layout="bento"] .logo-badge {
+  border-radius: 999px;
+}
+html[data-layout="bento"] .nav {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  gap: 4px;
+}
+html[data-layout="bento"] .nav a.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 4px 16px var(--accent-soft);
+}
+html[data-layout="bento"] .nav a.on .nav-icon {
+  color: var(--accent-ink);
+}
+html[data-layout="bento"] .main {
+  padding-top: 28px;
+}
+html[data-layout="bento"] .page-heading {
+  border-bottom: 0;
+  padding-bottom: 6px;
+  margin-bottom: 18px;
+}
+html[data-layout="bento"] .node-strip {
+  padding: 20px 26px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+html[data-layout="bento"] .cards {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+html[data-layout="bento"] .metric-card {
+  grid-column: span 4;
+  padding: 22px 24px;
+  border-radius: 22px;
+}
+html[data-layout="bento"] .metric-card:nth-child(1) {
+  grid-column: span 5;
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 60%, var(--accent-soft) 140%);
+  border-color: var(--border-strong);
+}
+html[data-layout="bento"] .metric-card:nth-child(2) {
+  grid-column: span 3;
+}
+html[data-layout="bento"] .metric-card:nth-child(3) {
+  grid-column: span 4;
+}
+html[data-layout="bento"] .metric-card:nth-child(7),
+html[data-layout="bento"] .metric-card:nth-child(8) {
+  grid-column: span 6;
+}
+html[data-layout="bento"] .metric-icon-wrap {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 999px;
+}
+html[data-layout="bento"] .card .v {
+  font-size: clamp(19px, 1.8vw, 24px);
+  margin-top: 16px;
+}
+html[data-layout="bento"] .metric-card:nth-child(1) .v,
+html[data-layout="bento"] .metric-card:nth-child(7) .v,
+html[data-layout="bento"] .metric-card:nth-child(8) .v {
+  font-size: clamp(22px, 2.2vw, 29px);
+}
+html[data-layout="bento"] .meter {
+  height: 8px;
+}
+html[data-layout="bento"] .btn,
+html[data-layout="bento"] .btn.sm {
+  border-radius: 999px;
+}
+html[data-layout="bento"] .btn {
+  padding: 8px 18px;
+}
+html[data-layout="bento"] .btn.sm {
+  padding: 5px 13px;
+}
+html[data-layout="bento"] .dash-services .tblwrap {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+html[data-layout="bento"] .dash-services .svc-table {
+  display: block;
+  min-width: 0;
+}
+html[data-layout="bento"] .dash-services .svc-table thead {
+  display: none;
+}
+html[data-layout="bento"] .dash-services .svc-table tbody {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+  gap: 12px;
+}
+html[data-layout="bento"] .dash-services .svc-table tr {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--specular), var(--shadow-sm);
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+html[data-layout="bento"] .dash-services .svc-table tr:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+html[data-layout="bento"] .dash-services .svc-table td {
+  padding: 0;
+  border: 0;
+}
+html[data-layout="bento"] .dash-services .svc-table td:nth-child(1) {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 14px;
+}
+html[data-layout="bento"] .dash-services .svc-table td:nth-child(2) {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+html[data-layout="bento"] .dash-services .svc-table td:nth-child(3) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+html[data-layout="bento"] body.login-body .login-shell {
+  width: 500px;
+}
+html[data-layout="bento"] body.login-body .login-split {
+  grid-template-columns: 1fr;
+  border-radius: 28px;
+}
+html[data-layout="bento"] body.login-body .login-showcase {
+  padding: 28px 30px 24px;
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+  gap: 14px;
+}
+html[data-layout="bento"] body.login-body .showcase-title {
+  margin-top: 12px;
+  font-size: 20px;
+}
+html[data-layout="bento"] body.login-body .showcase-copy {
+  display: none;
+}
+html[data-layout="bento"] body.login-body .login-card {
+  padding: 28px 30px 32px;
+}
+
+@media (max-width: 1060px) {
+  html[data-layout="bento"] .topbar-inner {
+    border-radius: 22px;
+  }
+  html[data-layout="bento"] .cards {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  html[data-layout="bento"] .metric-card,
+  html[data-layout="bento"] .metric-card:nth-child(2),
+  html[data-layout="bento"] .metric-card:nth-child(3),
+  html[data-layout="bento"] .metric-card:nth-child(7),
+  html[data-layout="bento"] .metric-card:nth-child(8) {
+    grid-column: span 3;
+  }
+  html[data-layout="bento"] .metric-card:nth-child(1) {
+    grid-column: span 6;
+  }
+}
+@media (max-width: 600px) {
+  html[data-layout="bento"] .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  html[data-layout="bento"] .metric-card,
+  html[data-layout="bento"] .metric-card:nth-child(2),
+  html[data-layout="bento"] .metric-card:nth-child(3),
+  html[data-layout="bento"] .metric-card:nth-child(7),
+  html[data-layout="bento"] .metric-card:nth-child(8) {
+    grid-column: span 1;
+    padding: 15px;
+    border-radius: 16px;
+  }
+  html[data-layout="bento"] .metric-card:nth-child(1) {
+    grid-column: span 2;
+  }
+}
+
+/* =====================================================================
+ * Layout 3: Terminal Console (Zero-radius Swiss NOC grid & underline tabs)
+ * ===================================================================== */
+html[data-layout="console"] {
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius: 0px;
+  --radius-lg: 0px;
+  --shadow-sm: none;
+  --shadow: none;
+  --specular: none;
+}
+html[data-layout="console"] body {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+html[data-layout="console"] .topbar {
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 2px solid var(--border-strong);
+}
+html[data-layout="console"] .topbar-inner {
+  max-width: 1440px;
+  padding: 0 clamp(14px, 2.5vw, 32px);
+  min-height: 56px;
+}
+html[data-layout="console"] .logo-badge {
+  border-radius: 0;
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+html[data-layout="console"] .brand-name {
+  font-family: var(--font-mono);
+  letter-spacing: 0.14em;
+}
+html[data-layout="console"] .brand-sub {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+html[data-layout="console"] .nav {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  gap: 0;
+  align-self: stretch;
+}
+html[data-layout="console"] .nav a {
+  border-radius: 0;
+  padding: 15px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+html[data-layout="console"] .nav a.on {
+  background: var(--surface-2);
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+  box-shadow: none;
+}
+html[data-layout="console"] .theme-picker select,
+html[data-layout="console"] .logout-link {
+  border-radius: 0;
+  border-color: var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+html[data-layout="console"] .main {
+  max-width: 1440px;
+  padding-top: 24px;
+}
+html[data-layout="console"] .page-heading {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+html[data-layout="console"] .page-heading h1 {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: clamp(18px, 1.8vw, 22px);
+}
+html[data-layout="console"] .node-strip {
+  border: 1px solid var(--border-strong);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+html[data-layout="console"] .cards {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
+  margin-bottom: 24px;
+}
+html[data-layout="console"] .metric-card {
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 15px 16px;
+}
+html[data-layout="console"] .metric-card:hover {
+  transform: none;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+html[data-layout="console"] .card .k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+html[data-layout="console"] .metric-icon-wrap {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+}
+html[data-layout="console"] .meter,
+html[data-layout="console"] .meter > span,
+html[data-layout="console"] .quota-bar,
+html[data-layout="console"] .quota-bar > span {
+  border-radius: 0;
+  height: 6px;
+}
+html[data-layout="console"] .section-heading h2,
+html[data-layout="console"] h3 {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 13px;
+}
+html[data-layout="console"] .health-summary,
+html[data-layout="console"] .pill,
+html[data-layout="console"] .filter-chip,
+html[data-layout="console"] .btn,
+html[data-layout="console"] .btn.sm,
+html[data-layout="console"] input,
+html[data-layout="console"] select {
+  border-radius: 0;
+  font-family: var(--font-mono);
+}
+html[data-layout="console"] .btn {
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  box-shadow: none;
+}
+html[data-layout="console"] .btn:hover {
+  transform: none;
+}
+html[data-layout="console"] .tblwrap,
+html[data-layout="console"] .composer-card,
+html[data-layout="console"] .card,
+html[data-layout="console"] .link-item,
+html[data-layout="console"] .kv-item {
+  border-color: var(--border-strong);
+}
+html[data-layout="console"] th,
+html[data-layout="console"] td {
+  padding: 9px 12px;
+  font-size: 12.5px;
+  border-right: 1px solid var(--border);
+}
+html[data-layout="console"] th:last-child,
+html[data-layout="console"] td:last-child {
+  border-right: 0;
+}
+html[data-layout="console"] th {
+  font-family: var(--font-mono);
+  border-bottom: 2px solid var(--border-strong);
+}
+html[data-layout="console"] tbody tr:nth-child(even) {
+  background: var(--surface-inset);
+}
+html[data-layout="console"] body.login-body .login-shell {
+  width: 540px;
+}
+html[data-layout="console"] body.login-body .login-split {
+  grid-template-columns: 1fr;
+  border: 2px solid var(--border-strong);
+  box-shadow: 8px 8px 0 var(--border-strong);
+}
+html[data-layout="console"] body.login-body .login-showcase {
+  padding: 20px 26px;
+  border-right: 0;
+  border-bottom: 2px solid var(--border-strong);
+  background: var(--surface-inset);
+  gap: 12px;
+}
+html[data-layout="console"] body.login-body .showcase-title {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 10px;
+}
+html[data-layout="console"] body.login-body .showcase-copy {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+html[data-layout="console"] body.login-body .proto-tag {
+  border-radius: 0;
+}
+html[data-layout="console"] body.login-body .login-card {
+  padding: 26px;
+}
+html[data-layout="console"] body.login-body .login-card h1 {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 17px;
+}
+
+@media (max-width: 960px) {
+  html[data-layout="console"] .topbar-inner {
+    padding: 10px 14px 0;
+  }
+  html[data-layout="console"] .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  html[data-layout="console"] .cards {
+    grid-template-columns: 1fr;
+  }
+}
 """
 
 CLIENT_JS = """
@@ -1464,6 +2197,12 @@ if (themeSelect) themeSelect.value = document.documentElement.getAttribute('data
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   try { localStorage.setItem('ragnar-theme', theme); } catch (e) {}
+}
+var layoutSelect = document.getElementById('layout-select');
+if (layoutSelect) layoutSelect.value = document.documentElement.getAttribute('data-layout') || 'classic';
+function setLayout(layout) {
+  document.documentElement.setAttribute('data-layout', layout);
+  try { localStorage.setItem('ragnar-layout', layout); } catch (e) {}
 }
 function toggleLoginPw(btn) {
   var inp = document.getElementById('login-pass');
@@ -1618,12 +2357,13 @@ def layout(title, active, body, flash="", page_icon="server", extra_js=""):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Ragnar VPS Management Panel - {esc(title)}">
 <title>{esc(title)} - Ragnar Panel</title>{PAGE_HEAD}<style>{CSS}</style></head>
-<body><a class="skip-link" href="#main">Skip to content</a>
+<body class="app-body"><a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar"><div class="topbar-inner">
 <a class="brand" href="{U('/')}"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
 <span class="brand-text"><span class="brand-name">RAGNAR</span><span class="brand-sub">VPS Console</span></span></a>
 <nav class="nav" aria-label="Primary navigation">{links}</nav>
 <div class="topbar-utils">
+{layout_picker()}
 {theme_picker()}
 <a class="logout-link" href="{U('/logout')}">{icon("logout", "nav-icon")}<span>Logout</span></a>
 </div></div></header>
@@ -1642,7 +2382,7 @@ def login_page(error=""):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Sign in to Ragnar VPS Management Panel">
 <title>Login - Ragnar Panel</title>{PAGE_HEAD}<style>{CSS}</style></head>
-<body><div class="login-shell"><div class="login-split">
+<body class="login-body"><div class="login-shell"><div class="login-split">
 <div class="login-showcase"><div>
 <div class="showcase-head"><span class="logo-badge">{icon("brand", "logo-icon")}</span>
 <span class="brand-text"><span class="brand-name">RAGNAR</span><span class="brand-sub">by @farisbazed</span></span></div>
@@ -1654,9 +2394,9 @@ def login_page(error=""):
 <span class="proto-tag">Trojan</span><span class="proto-tag">AnyTLS</span><span class="proto-tag">ZIVPN</span><span class="proto-tag">DNSTT</span>
 </div></div>
 <div class="login-card">
-<div style="display:flex;justify-content:space-between;align-items:center">
+<div class="login-head-row">
 <h1>Sign in</h1>
-{theme_picker()}
+<div class="login-pickers">{layout_picker()}{theme_picker()}</div>
 </div>
 <p class="login-sub">Enter your administrator credentials to continue.</p>{err}
 <form method="post" action="{U('/login')}">
@@ -1914,13 +2654,14 @@ def page_dashboard(csrf, flash=""):
 """
     return layout(
         "Dashboard", "dashboard",
-        f'{node_strip}<div class="cards">{card_html}</div>'
-        f'<div class="section-heading"><div><h2>Service status</h2></div>'
+        f'{node_strip}<div class="dash-grid">'
+        f'<div class="dash-metrics"><div class="cards">{card_html}</div></div>'
+        f'<div class="dash-services"><div class="section-heading"><div><h2>Service status</h2></div>'
         f'<span class="health-summary" id="health-badge">{online_services} / '
         f'{len(service_states)} healthy</span></div><div class="tblwrap">'
-        f"<table><thead><tr><th>Daemon Unit</th><th>State</th>"
+        f'<table class="svc-table"><thead><tr><th>Daemon Unit</th><th>State</th>'
         f'<th style="text-align:right">Control</th></tr></thead>'
-        f"<tbody>{svc_html}</tbody></table></div>",
+        f"<tbody>{svc_html}</tbody></table></div></div></div>",
         flash, page_icon="dashboard", extra_js=dash_js,
     )
 

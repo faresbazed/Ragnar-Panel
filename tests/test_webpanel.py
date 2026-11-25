@@ -134,6 +134,16 @@ for i, name in enumerate(("O'Brien", "x');alert(1);//", 'quotes"<&>\\\\end')):
             self.assertIsNotNone(picker)
             self.assertEqual(re.findall(r'<option value="([^"]+)">', picker.group(1)),
                              ["dark", "light", "orchid", "evergreen", "cobalt", "parchment"])
+            layout_sel = re.search(r'<select\b[^>]*aria-label="Panel layout"[^>]*>(.*?)</select>', view, re.S)
+            self.assertIsNotNone(layout_sel)
+            self.assertEqual(re.findall(r'<option value="([^"]+)">', layout_sel.group(1)),
+                             ["classic", "sidebar", "bento", "console"])
+            for lay in ("sidebar", "bento", "console"):
+                self.assertIn(f'html[data-layout="{lay}"]', view)
+            self.assertIn("ragnar-layout", view)
+            self.assertIn("setLayout(", view)
+        self.assertIn('class="dash-grid"', dash)
+        self.assertIn('class="svc-table"', dash)
         self.assertIn('class="node-strip"', dash)
         self.assertIn('class="nav-icon"', dash)
         self.assertIn('aria-current="page"', dash)

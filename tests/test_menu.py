@@ -23,6 +23,7 @@ PAGES = {
     "health": ("status_page", "Status & health"),
     "update": ("update_panel", "Update panel"),
     "appearance": ("theme_menu", "Appearance"),
+    "layout": ("layout_menu", "Panel layout"),
 }
 FIXTURE = """
 source "$MENU"
@@ -76,6 +77,7 @@ if __name__ == '__main__':
         (self.base / "settings.json").write_text(json.dumps(SETTINGS))
         self.config = self.base / "config"
         self.preference = self.config / "ragnar/terminal-theme"
+        self.layout_preference = self.config / "ragnar/terminal-layout"
 
     def render(self, page, width, tty=False, no_color=False, keys="0\n", **overrides):
         env = {"TERM": "xterm-256color", "LC_ALL": "C.UTF-8", "PATH": str(self.bin),
@@ -170,6 +172,42 @@ if __name__ == '__main__':
         link = self.bin / "menu"
         link.symlink_to(ROOT / "menu.sh")
         self.assertIn("Orchid [current]", self.render("appearance", 40, keys="2\n0\n", MENU=str(link)))
+
+    def test_select_persist_and_fit_all_layouts(self):
+        self.assertIn("Classic [current]", self.render("layout", 40))
+        self.assertIn("Classic [current]", self.render("appearance", 40))
+        self.assertFalse(self.layout_preference.exists())
+        markers = [
+            (2, 7, "boxed", "╭─ HOST"),
+            (3, 8, "compact", "▸ HOST & RESOURCES"),
+            (4, 9, "ledger", "══╡ HOST ╞"),
+        ]
+        for layout_key, appearance_key, slug, marker in markers:
+            with self.subTest(layout=slug):
+                picked = self.render("layout", 40, keys=f"{layout_key}\n0\n")
+                self.assertIn(f"{slug.title()} [current]", picked)
+                self.assertEqual(self.layout_preference.read_text(), slug + "\n")
+                dash80 = self.render("dashboard", 80)
+                self.assertIn(marker, dash80)
+                for width in (32, 40, 80, 96):
+                    for page, (_, title) in PAGES.items():
+                        out = self.render(page, width)
+                        self.assertIn(title, out)
+                        self.assertNotIn("\x1b", out)
+                        self.assertNotIn("...", out)
+                        for line in out.splitlines():
+                            if SETTINGS["slowdns_pubkey"] in line:
+                                continue
+                            self.assertLessEqual(len(line), width, f"{slug}/{width}/{page}: {line!r}")
+                # Selecting from Appearance menu (keys 6-9) also persists cleanly.
+                via_app = self.render("appearance", 40, keys=f"{appearance_key}\nb\n")
+                self.assertIn(f"{slug.title()} [current]", via_app)
+                self.assertEqual(self.layout_preference.read_text(), slug + "\n")
+        # Restore classic via Appearance key 6 and verify invalid saved value falls back.
+        self.assertIn("Classic [current]", self.render("appearance", 40, keys="6\n0\n"))
+        self.assertEqual(self.layout_preference.read_text(), "classic\n")
+        self.layout_preference.write_text("not a layout\n")
+        self.assertIn("Classic [current]", self.render("layout", 40))
 
 
 if __name__ == "__main__":

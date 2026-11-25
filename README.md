@@ -10,9 +10,12 @@ together **without the ports fighting each other**.
 transfer, accounts and service health above the numbered menus. On narrow
 terminals, values stack and optional hints give way to action labels.
 Press **T · Appearance** to select Orchid, Evergreen, Cobalt or Parchment,
-or to restore the default terminal colors. The terminal saves your choice
-per user in `$XDG_CONFIG_HOME/ragnar/terminal-theme` (normally
-`~/.config/ragnar/terminal-theme`), independently of the web panel.
+or to restore the default terminal colors; press **L · Layout** (or keys 6–9
+inside Appearance) to switch between **Classic**, **Boxed** (rounded card
+panels), **Compact** (two-column split HUD) and **Ledger** (double-ruled
+console). Preferences are saved per user in `$XDG_CONFIG_HOME/ragnar/terminal-theme`
+and `$XDG_CONFIG_HOME/ragnar/terminal-layout` (normally under `~/.config/ragnar/`),
+independently of the web panel.
 Use `NO_COLOR=1 menu` for unstyled output without changing your preference.
 
 ## Install
@@ -200,9 +203,10 @@ conntrack headroom, `LimitNOFILE` everywhere.
   after DNSTT forwards them into the SSH backend
 
 ### Web panel (3x-ui style)
-- Choose a color theme in the sign-in card or panel header: Dark (default),
-  Light, Orchid, Evergreen, Cobalt, or Parchment. The choice is saved in
-  this browser and does not change the terminal's appearance.
+- Choose a panel layout (**Classic**, **Sidebar**, **Bento**, or **Console**)
+  and a color theme (**Dark**, **Light**, **Orchid**, **Evergreen**, **Cobalt**,
+  or **Parchment**) independently from the sign-in card or panel header. Both
+  choices are saved in this browser and do not change the terminal's appearance.
 - `https://<your-domain>/panel` — username/password login (PBKDF2,
   lockout after failed attempts), served with the panel's own domain
   certificate by `ragnar-web.service`

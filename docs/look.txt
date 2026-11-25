@@ -42,7 +42,8 @@
   11  Clear RAM cache             Drop Linux filesystem caches
   12  Reboot VPS                  Restart the whole server
   13  Uninstall panel             Restore snapshots and remove Ragnar
-   t  Appearance                  Choose a terminal theme
+   t  Appearance                  Theme and panel layout
+   l  Layout                      Choose a terminal design
 
    x  Exit                        Leave this menu
   @farisbazed · https://t.me/ragnaresim

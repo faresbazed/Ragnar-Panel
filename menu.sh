@@ -25,12 +25,55 @@ term_width() {
 }
 clear_screen() { [[ -t 1 && ${TERM:-dumb} != dumb ]] && clear 2>/dev/null || true; }
 
+ui_repeat() {
+    local _out=$1 _n=$2 _ch=$3 _buf=''
+    (( _n > 0 )) && printf -v _buf '%*s' "$_n" ''
+    printf -v "$_out" '%s' "${_buf// /$_ch}"
+}
+ui_box_close() {
+    [[ ${UI_BOX_OPEN:-0} == 1 ]] || return 0
+    local rule
+    ui_repeat rule "$((UI_COLS - 2))" '─'
+    printf '%s╰%s╯%s\n' "$DIM" "$rule" "$N"
+    UI_BOX_OPEN=0
+}
+ui_box_row() {
+    local vis=$1 content=$2 inner=$((UI_COLS - 4)) pad
+    if (( vis <= inner )); then
+        pad=$((inner - vis))
+        printf '%s│%s %s%*s %s│%s\n' "$DIM" "$N" "$content" "$pad" '' "$DIM" "$N"
+    else
+        printf '%s│%s %s\n' "$DIM" "$N" "$content"
+    fi
+}
+ui_prompt_prefix() {
+    case "${LAYOUT:-classic}" in
+        boxed) printf '  %s╰─%s›%s ' "$DIM" "$C" "$N" ;;
+        compact) printf '  %s»%s ' "$C" "$N" ;;
+        ledger) printf '  %s[>]%s ' "$C" "$N" ;;
+        *) printf '  %s›%s ' "$C" "$N" ;;
+    esac
+}
+
 # Wrap prose at words. A long single token (e.g. a public key) stays
 # intact for copying and gets the terminal's own soft wrapping.
 paragraph() {
-    local content=$1 color=${2:-} indent=${3:-2} word line=''
+    local content=$1 color=${2:-} indent=${3:-2} word line='' extra=0 limit=$UI_COLS
     local -a words
     read -ra words <<<"$content"
+    if [[ ${LAYOUT:-classic} == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+        (( indent > 2 )) && extra=$((indent - 2))
+        limit=$((UI_COLS - 4 - extra))
+        for word in "${words[@]}"; do
+            if [[ -n $line ]] && (( ${#line} + 1 + ${#word} > limit )); then
+                ui_box_row "$((extra + ${#line}))" "$(printf '%*s%s%s%s' "$extra" '' "$color" "$line" "$N")"
+                line=''
+            fi
+            line="${line:+$line }$word"
+        done
+        ui_box_row "$((extra + ${#line}))" "$(printf '%*s%s%s%s' "$extra" '' "$color" "$line" "$N")"
+        return 0
+    fi
     for word in "${words[@]}"; do
         if [[ -n $line ]] && (( indent + ${#line} + 1 + ${#word} > UI_COLS )); then
             printf '%*s%s%s%s\n' "$indent" '' "$color" "$line" "$N"
@@ -41,77 +84,274 @@ paragraph() {
     printf '%*s%s%s%s\n' "$indent" '' "$color" "$line" "$N"
 }
 section() {
-    local title=$1 rule span=$((UI_COLS - ${#1} - 4))
-    printf '\n  %s%s%s%s' "$C" "$B" "$title" "$N"
-    if (( span > 0 )); then
-        printf -v rule '%*s' "$span" ''
-        printf '  %s%s%s' "$DIM" "${rule// /─}" "$N"
-    fi
-    printf '\n'
+    local title=$1 rule='' span
+    case "${LAYOUT:-classic}" in
+        boxed)
+            ui_box_close
+            span=$((UI_COLS - ${#title} - 5))
+            (( span > 0 )) && ui_repeat rule "$span" '─'
+            printf '\n%s╭─ %s%s%s%s%s %s╮%s\n' "$DIM" "$C" "$B" "$title" "$N" "$DIM" "$rule" "$N"
+            UI_BOX_OPEN=1 ;;
+        compact)
+            span=$((UI_COLS - ${#title} - 6))
+            printf '\n  %s▸ %s%s%s' "$C" "$B" "$title" "$N"
+            if (( span > 0 )); then
+                ui_repeat rule "$span" '╌'
+                printf '  %s%s%s' "$DIM" "$rule" "$N"
+            fi
+            printf '\n' ;;
+        ledger)
+            span=$((UI_COLS - ${#title} - 6))
+            (( span > 0 )) && ui_repeat rule "$span" '═'
+            printf '\n%s══╡ %s%s%s%s%s ╞%s%s\n' "$DIM" "$C" "$B" "$title" "$N" "$DIM" "$rule" "$N" ;;
+        *)
+            span=$((UI_COLS - ${#title} - 4))
+            printf '\n  %s%s%s%s' "$C" "$B" "$title" "$N"
+            if (( span > 0 )); then
+                ui_repeat rule "$span" '─'
+                printf '  %s%s%s' "$DIM" "$rule" "$N"
+            fi
+            printf '\n' ;;
+    esac
 }
 masthead() {
-    local title=$1 host=$2 brand='VPS CONSOLE'
+    local title=$1 host=$2 brand='VPS CONSOLE' rule='' inner gap
     UI_COLS=$(term_width)
+    UI_BOX_OPEN=0
     printf '%s' "$CANVAS"
     clear_screen
-    printf '  %s RAGNAR %s  %s%s%s' "$BADGE" "$N" "$DIM" "$brand" "$N"
-    if (( 26 + ${#host} <= UI_COLS )); then
-        printf '%*s%s%s%s\n' "$((UI_COLS - 23 - ${#host}))" '' "$DIM" "$host" "$N"
-    else
-        printf '\n'; paragraph "$host" "$DIM"
-    fi
-    printf '\n  %s%s%s\n' "$B" "$title" "$N"
+    case "${LAYOUT:-classic}" in
+        boxed)
+            inner=$((UI_COLS - 4))
+            ui_repeat rule "$((UI_COLS - 2))" '─'
+            printf '%s╭%s╮%s\n' "$DIM" "$rule" "$N"
+            if (( 21 + 2 + ${#host} <= inner )); then
+                gap=$((inner - 21 - ${#host}))
+                ui_box_row "$inner" "$(printf '%s RAGNAR %s  %s%s%s%*s%s%s%s' "$BADGE" "$N" "$DIM" "$brand" "$N" "$gap" '' "$DIM" "$host" "$N")"
+            elif (( 8 + 2 + ${#host} <= inner )); then
+                gap=$((inner - 8 - ${#host}))
+                ui_box_row "$inner" "$(printf '%s RAGNAR %s%*s%s%s%s' "$BADGE" "$N" "$gap" '' "$DIM" "$host" "$N")"
+            else
+                ui_box_row 8 "$(printf '%s RAGNAR %s' "$BADGE" "$N")"
+                ui_box_row "${#host}" "$(printf '%s%s%s' "$DIM" "$host" "$N")"
+            fi
+            ui_box_row "${#title}" "$(printf '%s%s%s' "$B" "$title" "$N")"
+            printf '%s╰%s╯%s\n' "$DIM" "$rule" "$N" ;;
+        compact)
+            printf '  %s RAGNAR %s  %s%s%s' "$BADGE" "$N" "$B" "$title" "$N"
+            if (( 12 + ${#title} + 2 + ${#host} <= UI_COLS )); then
+                printf '%*s%s%s%s\n' "$((UI_COLS - 12 - ${#title} - ${#host}))" '' "$DIM" "$host" "$N"
+            else
+                printf '\n'; paragraph "$host" "$DIM"
+            fi
+            ui_repeat rule "$UI_COLS" '═'
+            printf '%s%s%s\n' "$DIM" "$rule" "$N" ;;
+        ledger)
+            inner=$((UI_COLS - 4))
+            ui_repeat rule "$((UI_COLS - 2))" '═'
+            printf '%s╔%s╗%s\n' "$DIM" "$rule" "$N"
+            if (( 21 + 8 + ${#host} <= inner )); then
+                gap=$((inner - 27 - ${#host}))
+                printf '%s║%s %s%sRAGNAR%s %s// %s%s%*s%sHOST: %s%s %s║%s\n' \
+                    "$DIM" "$N" "$C" "$B" "$N" "$DIM" "$brand" "$N" "$gap" '' "$DIM" "$N" "$host" "$DIM" "$N"
+            elif (( 6 + 2 + ${#host} <= inner )); then
+                gap=$((inner - 6 - ${#host}))
+                printf '%s║%s %s%sRAGNAR%s%*s%s%s%s %s║%s\n' \
+                    "$DIM" "$N" "$C" "$B" "$N" "$gap" '' "$DIM" "$host" "$N" "$DIM" "$N"
+            else
+                gap=$((inner - 6))
+                printf '%s║%s %s%sRAGNAR%s%*s %s║%s\n' "$DIM" "$N" "$C" "$B" "$N" "$gap" '' "$DIM" "$N"
+                gap=$((inner - ${#host}))
+                if (( gap >= 0 )); then
+                    printf '%s║%s %s%s%s%*s %s║%s\n' "$DIM" "$N" "$DIM" "$host" "$N" "$gap" '' "$DIM" "$N"
+                else
+                    printf '%s║%s %s%s%s\n' "$DIM" "$N" "$DIM" "$host" "$N"
+                fi
+            fi
+            printf '%s╠%s╣%s\n' "$DIM" "$rule" "$N"
+            gap=$((inner - 2 - ${#title}))
+            if (( gap >= 0 )); then
+                printf '%s║%s %s»%s %s%s%s%*s %s║%s\n' "$DIM" "$N" "$C" "$N" "$B" "$title" "$N" "$gap" '' "$DIM" "$N"
+            else
+                printf '%s║%s %s»%s %s%s%s\n' "$DIM" "$N" "$C" "$N" "$B" "$title" "$N"
+            fi
+            printf '%s╚%s╝%s\n' "$DIM" "$rule" "$N" ;;
+        *)
+            printf '  %s RAGNAR %s  %s%s%s' "$BADGE" "$N" "$DIM" "$brand" "$N"
+            if (( 26 + ${#host} <= UI_COLS )); then
+                printf '%*s%s%s%s\n' "$((UI_COLS - 23 - ${#host}))" '' "$DIM" "$host" "$N"
+            else
+                printf '\n'; paragraph "$host" "$DIM"
+            fi
+            printf '\n  %s%s%s\n' "$B" "$title" "$N" ;;
+    esac
 }
 page_header() {
     masthead "$1" "$(server_ip)"
     [[ -z ${2:-} ]] || paragraph "$2" "$DIM"
 }
 kv() {
-    local label=$1 value=$2 color=${3:-}
-    if (( 16 + ${#value} <= UI_COLS )); then
-        printf '  %s%-12s%s  %s%s%s\n' "$DIM" "$label" "$N" "$color" "$value" "$N"
+    local label=$1 value=$2 color=${3:-} lw=12
+    (( ${#label} > lw )) && lw=${#label}
+    if [[ ${LAYOUT:-classic} == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+        if (( lw + 2 + ${#value} <= UI_COLS - 4 )); then
+            ui_box_row "$((lw + 2 + ${#value}))" "$(printf '%s%-*s%s  %s%s%s' "$DIM" "$lw" "$label" "$N" "$color" "$value" "$N")"
+        else
+            ui_box_row "${#label}" "$(printf '%s%s%s' "$DIM" "$label" "$N")"
+            paragraph "$value" "$color" 4
+        fi
+        return 0
+    fi
+    if [[ ${LAYOUT:-classic} == ledger ]]; then
+        if (( 2 + lw + 3 + ${#value} <= UI_COLS )); then
+            printf '  %s%-*s%s %s:%s %s%s%s\n' "$DIM" "$lw" "$label" "$N" "$DIM" "$N" "$color" "$value" "$N"
+        else
+            printf '  %s%s:%s\n' "$DIM" "$label" "$N"
+            paragraph "$value" "$color" 4
+        fi
+        return 0
+    fi
+    if (( 2 + lw + 2 + ${#value} <= UI_COLS )); then
+        printf '  %s%-*s%s  %s%s%s\n' "$DIM" "$lw" "$label" "$N" "$color" "$value" "$N"
     else
         printf '  %s%s%s\n' "$DIM" "$label" "$N"
         paragraph "$value" "$color" 4
     fi
 }
+# Format status values for non-classic layouts without changing underlying data.
+ui_fact_display() {
+    local val=$1
+    case "${LAYOUT:-classic}:$val" in
+        compact:Online) printf '● Online' ;;
+        compact:Offline) printf '○ Offline' ;;
+        'compact:No tunnel') printf '◌ No tunnel' ;;
+        ledger:Online|ledger:Offline|'ledger:No tunnel') printf '[%s]' "$val" ;;
+        *) printf '%s' "$val" ;;
+    esac
+}
 # Fit complete label/value pairs to the row; never crop a value.
 facts() {
-    local label value style i cell=0 keylen=0 pos=0 cols rows count=$(( $# / 2 ))
-    local -a args=("$@")
+    local label value disp style i cell=0 keylen=0 pos=0 cols rows count=$(( $# / 2 ))
+    local avail=$UI_COLS lead=2 sep='   ' sep_vis=3 row_vis=0 row_txt='' piece pad
+    local -a args=("$@") disps=()
+    if [[ ${LAYOUT:-classic} == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+        avail=$((UI_COLS - 4)); lead=0
+    elif [[ ${LAYOUT:-classic} == ledger ]]; then
+        sep=" ${DIM}│${N} "
+    fi
     for ((i=0; i<${#args[@]}; i+=2)); do
         label=${args[i]}; value=${args[i+1]}
+        disp=$(ui_fact_display "$value")
+        disps+=("$disp")
         (( ${#label} > keylen )) && keylen=${#label}
-        (( ${#value} > cell )) && cell=${#value}
+        (( ${#disp} > cell )) && cell=${#disp}
     done
-    cell=$((keylen + 2 + cell + 3))
-    cols=$(( (UI_COLS + 1) / cell ))
+    local val_max=$cell
+    cell=$((keylen + 2 + val_max + sep_vis))
+    cols=$(( (avail - lead + sep_vis) / cell ))
     (( cols > 4 )) && cols=4
     (( cols < 1 )) && cols=1
     rows=$(( (count + cols - 1) / cols ))
     (( rows )) || return 0
     cols=$(( (count + rows - 1) / rows ))
+    local idx=0
     while (( $# )); do
         label=$1; value=$2; shift 2
+        disp=${disps[idx]}; idx=$((idx + 1))
         case "$value" in
             Online) style=$G ;; Offline) style=$R ;; 'No tunnel') style=$Y ;; *) style=$B ;;
         esac
-        if (( keylen + 4 + ${#value} > UI_COLS )); then
-            kv "$label" "$value" "$style"; continue
+        if (( lead + keylen + 2 + ${#disp} > avail )); then
+            if (( pos > 0 )); then
+                if [[ ${LAYOUT:-classic} == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+                    ui_box_row "$row_vis" "$row_txt"; row_vis=0; row_txt=''
+                else
+                    printf '\n'
+                fi
+                pos=0
+            fi
+            kv "$label" "$disp" "$style"; continue
         fi
-        printf '%*s%s%-*s%s  %s%s%s' "$((pos == 0 ? 2 : 0))" '' "$DIM" "$keylen" "$label" "$N" "$style" "$value" "$N"
-        pos=$((pos + 1))
-        if (( $# && pos < cols )); then
-            printf '%*s' "$((cell - keylen - 2 - ${#value}))" ''
+        printf -v piece '%s%-*s%s  %s%s%s' "$DIM" "$keylen" "$label" "$N" "$style" "$disp" "$N"
+        if [[ ${LAYOUT:-classic} == boxed && ${UI_BOX_OPEN:-0} == 1 ]]; then
+            row_txt+="$piece"
+            row_vis=$((row_vis + keylen + 2 + ${#disp}))
+            pos=$((pos + 1))
+            if (( $# && pos < cols )); then
+                pad=$((cell - keylen - 2 - ${#disp}))
+                printf -v piece '%*s' "$pad" ''
+                row_txt+="$piece"; row_vis=$((row_vis + pad))
+            else
+                ui_box_row "$row_vis" "$row_txt"
+                row_vis=0; row_txt=''; pos=0
+            fi
         else
-            printf '\n'; pos=0
+            printf '%*s%s' "$((pos == 0 ? lead : 0))" '' "$piece"
+            pos=$((pos + 1))
+            if (( $# && pos < cols )); then
+                pad=$((cell - keylen - 2 - ${#disp} - sep_vis))
+                (( pad > 0 )) && printf '%*s' "$pad" ''
+                printf '%s' "$sep"
+            else
+                printf '\n'; pos=0
+            fi
         fi
     done
 }
 opt() {
     local key=$1 label=$2 detail=${3:-} ink=$C
-    case "$key" in 0|x) printf '\n'; ink=$DIM ;; esac
+    local inner kstr kvis dots dotstr row
     [[ ${4:-} != warn ]] || ink=$Y
+    case "${LAYOUT:-classic}" in
+        boxed)
+            case "$key" in
+                0|x)
+                    ui_box_close
+                    ink=$DIM
+                    printf '  %s[%s%s%2s%s%s]%s %s' "$DIM" "$ink" "$B" "$key" "$N" "$DIM" "$N" "$label"
+                    if [[ -n $detail ]] && (( UI_COLS >= 68 && ${#label} <= 26 && 35 + ${#detail} <= UI_COLS )); then
+                        printf '%*s%s%s%s' "$((28 - ${#label}))" '' "$DIM" "$detail" "$N"
+                    fi
+                    printf '\n'
+                    return 0 ;;
+            esac
+            if [[ ${UI_BOX_OPEN:-0} == 1 ]]; then
+                inner=$((UI_COLS - 4))
+                if (( 5 + ${#label} <= inner )); then
+                    printf -v kstr '%s[%s%s%2s%s%s]%s ' "$DIM" "$ink" "$B" "$key" "$N" "$DIM" "$N"
+                    kvis=5
+                else
+                    printf -v kstr '%s[%s%s%s%s%s]%s ' "$DIM" "$ink" "$B" "$key" "$N" "$DIM" "$N"
+                    kvis=$((3 + ${#key}))
+                fi
+                if [[ -n $detail ]] && (( UI_COLS >= 68 && kvis + ${#label} + 4 + ${#detail} <= inner )); then
+                    dots=$((inner - kvis - ${#label} - 2 - ${#detail}))
+                    ui_repeat dotstr "$dots" '·'
+                    printf -v row '%s%s %s%s %s%s' "$kstr" "$label" "$DIM" "$dotstr" "$detail" "$N"
+                    ui_box_row "$inner" "$row"
+                else
+                    ui_box_row "$((kvis + ${#label}))" "${kstr}${label}"
+                fi
+                return 0
+            fi ;;
+        compact)
+            case "$key" in 0|x) printf '\n'; ink=$DIM ;; esac
+            printf '  %s[%s%s%2s%s%s]%s %s' "$DIM" "$ink" "$B" "$key" "$N" "$DIM" "$N" "$label"
+            if [[ -n $detail ]] && (( UI_COLS >= 68 && ${#label} <= 26 && 35 + ${#detail} <= UI_COLS )); then
+                printf '%*s%s%s%s' "$((28 - ${#label}))" '' "$DIM" "$detail" "$N"
+            fi
+            printf '\n'
+            return 0 ;;
+        ledger)
+            case "$key" in 0|x) printf '\n'; ink=$DIM ;; esac
+            printf '  %s%s%2s%s %s│%s %s' "$ink" "$B" "$key" "$N" "$DIM" "$N" "$label"
+            if [[ -n $detail ]] && (( UI_COLS >= 68 && ${#label} <= 26 && 38 + ${#detail} <= UI_COLS )); then
+                printf '%*s%s:: %s%s' "$((28 - ${#label}))" '' "$DIM" "$detail" "$N"
+            fi
+            printf '\n'
+            return 0 ;;
+    esac
+    case "$key" in 0|x) printf '\n'; ink=$DIM ;; esac
     printf '  %s%s%2s%s  %s' "$ink" "$B" "$key" "$N" "$label"
     if [[ -n $detail ]] && (( UI_COLS >= 68 && ${#label} <= 26 && 34 + ${#detail} <= UI_COLS )); then
         printf '%*s%s%s%s' "$((28 - ${#label}))" '' "$DIM" "$detail" "$N"
@@ -119,11 +359,13 @@ opt() {
     printf '\n'
 }
 menu_choice() {
-    local prompt="${1:-Select an option}"
-    read -rp "  $C›$N $prompt " MENU_CHOICE || return 1
+    local prompt="${1:-Select an option}" prefix
+    ui_box_close
+    prefix=$(ui_prompt_prefix)
+    read -rp "${prefix}${prompt} " MENU_CHOICE || return 1
     case "$MENU_CHOICE" in b|B|back|BACK|q|Q) MENU_CHOICE=0 ;; esac
 }
-invalid_choice() { paragraph "Choose one of the listed keys." "$Y"; pause; }
+invalid_choice() { ui_box_close; paragraph "Choose one of the listed keys." "$Y"; pause; }
 svc_dot() {
     if systemctl is-active --quiet "$1" 2>/dev/null; then
         printf 'Online'
@@ -140,7 +382,7 @@ svc_dot_cf() {
         printf 'No tunnel'
     fi
 }
-pause() { read -rp "  Enter to continue › " _ || true; }
+pause() { ui_box_close; read -rp "  Enter to continue › " _ || true; }
 
 bandwidth_lines() {
     python3 "$CORE" bandwidth-summary 2>/dev/null \
@@ -188,17 +430,58 @@ cpu_usage_pct() {
 }
 
 resource_meter() {
-    local label=$1 value=$2 size=$(( UI_COLS >= 68 ? 12 : 6 )) pct used fill track
-    if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 12 + size + ${#value} <= UI_COLS )); then
-        pct=${BASH_REMATCH[1]}
-        (( pct > 100 )) && pct=100
-        used=$(( (pct * size + 50) / 100 ))
-        printf -v fill '%*s' "$used" ''; printf -v track '%*s' "$((size - used))" ''
-        printf '  %s%-6s%s  %s%s%s%s%s  %s\n' "$DIM" "$label" "$N" \
-            "$C" "${fill// /█}" "$DIM" "${track// /─}" "$N" "$value"
-    else
-        kv "$label" "$value"
-    fi
+    local label=$1 value=$2 size=$(( UI_COLS >= 68 ? 12 : 6 )) pct used fill track tip='' rem row
+    case "${LAYOUT:-classic}" in
+        boxed)
+            (( UI_COLS >= 68 )) && size=14
+            if [[ ${UI_BOX_OPEN:-0} == 1 && $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 12 + size + ${#value} <= UI_COLS - 4 )); then
+                pct=${BASH_REMATCH[1]}
+                (( pct > 100 )) && pct=100
+                used=$(( (pct * size + 50) / 100 ))
+                ui_repeat fill "$used" '▓'; ui_repeat track "$((size - used))" '░'
+                printf -v row '%s%-6s%s  %s▕%s%s%s%s%s▏%s  %s' \
+                    "$DIM" "$label" "$N" "$DIM" "$C" "$fill" "$DIM" "$track" "$DIM" "$N" "$value"
+                ui_box_row "$((12 + size + ${#value}))" "$row"
+                return 0
+            fi ;;
+        compact)
+            if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 12 + size + ${#value} <= UI_COLS )); then
+                pct=${BASH_REMATCH[1]}
+                (( pct > 100 )) && pct=100
+                used=$(( (pct * size + 50) / 100 ))
+                rem=$((size - used))
+                if (( used > 0 && rem > 0 )); then
+                    ui_repeat fill "$((used - 1))" '━'; tip='╸'
+                else
+                    ui_repeat fill "$used" '━'; tip=''
+                fi
+                ui_repeat track "$rem" '─'
+                printf '  %s%-6s%s  %s%s%s%s%s%s  %s\n' "$DIM" "$label" "$N" \
+                    "$C" "$fill" "$tip" "$DIM" "$track" "$N" "$value"
+                return 0
+            fi ;;
+        ledger)
+            if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 14 + size + ${#value} <= UI_COLS )); then
+                pct=${BASH_REMATCH[1]}
+                (( pct > 100 )) && pct=100
+                used=$(( (pct * size + 50) / 100 ))
+                ui_repeat fill "$used" '#'; ui_repeat track "$((size - used))" '-'
+                printf '  %s%-6s%s  %s[%s%s%s%s%s]%s  %s\n' "$DIM" "$label" "$N" \
+                    "$DIM" "$C" "$fill" "$DIM" "$track" "$DIM" "$N" "$value"
+                return 0
+            fi ;;
+        *)
+            if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]] && (( 12 + size + ${#value} <= UI_COLS )); then
+                pct=${BASH_REMATCH[1]}
+                (( pct > 100 )) && pct=100
+                used=$(( (pct * size + 50) / 100 ))
+                ui_repeat fill "$used" '█'; ui_repeat track "$((size - used))" '─'
+                printf '  %s%-6s%s  %s%s%s%s%s  %s\n' "$DIM" "$label" "$N" \
+                    "$C" "$fill" "$DIM" "$track" "$N" "$value"
+                return 0
+            fi ;;
+    esac
+    kv "$label" "$value"
 }
 read_host_stats() {
     ip=$(server_ip); isp=$(server_isp)
@@ -208,6 +491,134 @@ read_host_stats() {
     ram=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {if (t>0) printf "%dMB / %dMB (%.0f%%)", (t-a)/1024, t/1024, (t-a)*100/t}' /proc/meminfo 2>/dev/null)
     disk=$(df -Ph / 2>/dev/null | awk 'NR==2 {if ($2 == "0" || $2 == "0B") printf "%s used", $3; else printf "%s / %s (%s)", $3, $2, $5}')
     now=$(date '+%d-%m-%Y %T')
+}
+
+compact_svc_cell() {
+    local name=$1 state=$2 sym='●' col=$G
+    case "$state" in
+        Offline) sym='○'; col=$R ;;
+        'No tunnel') sym='◌'; col=$Y ;;
+    esac
+    printf -v "$3" '%s%s%s %s' "$col" "$sym" "$N" "$name"
+    printf -v "$4" '%d' "$((2 + ${#name}))"
+}
+compact_meter_line() {
+    local label=$1 value=$2 maxw=$3 pct used rem fill='' tip='' track='' size=8
+    if [[ $value =~ ([0-9]+)(\.[0-9]+)?% ]]; then
+        pct=${BASH_REMATCH[1]}; (( pct > 100 )) && pct=100
+        if (( 8 + size + 1 + ${#value} > maxw )); then size=6; fi
+        if (( 8 + size + 1 + ${#value} <= maxw )); then
+            used=$(( (pct * size + 50) / 100 )); rem=$((size - used))
+            if (( used > 0 && rem > 0 )); then
+                ui_repeat fill "$((used - 1))" '━'; tip='╸'
+            else
+                ui_repeat fill "$used" '━'; tip=''
+            fi
+            ui_repeat track "$rem" '─'
+            printf -v "$4" '  %s%-5s%s %s%s%s%s%s%s %s' "$DIM" "$label" "$N" "$C" "$fill" "$tip" "$DIM" "$track" "$N" "$value"
+            printf -v "$5" '%d' "$((8 + size + 1 + ${#value}))"
+            return 0
+        fi
+    fi
+    local val=$value
+    if (( 8 + ${#val} > maxw )); then val=${val:0:$((maxw - 8))}; fi
+    printf -v "$4" '  %s%-5s%s %s' "$DIM" "$label" "$N" "$val"
+    printf -v "$5" '%d' "$((8 + ${#val}))"
+}
+compact_kv_line() {
+    local label=$1 val=$2 maxw=$3
+    if (( 8 + ${#val} > maxw )); then val=${val:0:$((maxw - 8))}; fi
+    printf -v "$4" '  %s%-5s%s %s%s%s' "$DIM" "$label" "$N" "$B" "$val" "$N"
+    printf -v "$5" '%d' "$((8 + ${#val}))"
+}
+compact_dashboard_body() {
+    local lw=$(( (UI_COLS - 3) / 2 )) rw
+    rw=$(( UI_COLS - lw - 3 ))
+    local -a l_txt=() l_vis=() r_txt=() r_vis=()
+    local txt vis c1 v1 c2 v2 half=$(( (rw - 1) / 2 )) pad
+
+    l_txt+=("  ${C}▸ ${B}HOST & RESOURCES${N}"); l_vis+=(20)
+    compact_kv_line "ISP" "${isp:-Unknown}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_kv_line "OS" "${os:-Linux}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_kv_line "Up" "${up:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_kv_line "Time" "${now:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_meter_line "CPU" "${cpu:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_meter_line "RAM" "${ram:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_meter_line "Disk" "${disk:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_kv_line "Today" "${bw_today:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    compact_kv_line "Month" "${bw_month:-n/a}" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    if [[ -n ${bw_src:-} ]]; then
+        compact_kv_line "Src" "$bw_src" "$lw" txt vis; l_txt+=("$txt"); l_vis+=("$vis")
+    fi
+
+    local acc1="Total ${s_total:-0} · Online ${s_online:-0}"
+    local acc2="SSH ${s_ssh:-0} · VLESS ${s_vless:-0} · VMess ${s_vmess:-0}"
+    local acc3="Trojan ${s_trojan:-0} · SSWS ${s_ssws:-0} · ZIVPN ${s_zivpn:-0}"
+    (( ${#acc1} > rw )) && acc1=${acc1:0:$rw}
+    (( ${#acc2} > rw )) && acc2=${acc2:0:$rw}
+    (( ${#acc3} > rw )) && acc3=${acc3:0:$rw}
+    r_txt+=("${C}▸ ${B}ACCOUNTS${N}"); r_vis+=(10)
+    r_txt+=("${B}${acc1}${N}"); r_vis+=("${#acc1}")
+    r_txt+=("${DIM}${acc2}${N}"); r_vis+=("${#acc2}")
+    r_txt+=("${DIM}${acc3}${N}"); r_vis+=("${#acc3}")
+    r_txt+=("${C}▸ ${B}SERVICES${N}"); r_vis+=(10)
+
+    local -a svc_pairs=(
+        "Xray" "${svc_map[xray]}" "HAProxy" "${svc_map[haproxy]}"
+        "Dropbear" "${svc_map[dropbear]}" "sing-box" "${svc_map[sing-box]}"
+        "UDP Custom" "${svc_map[udp-custom]}" "ZIVPN" "${svc_map[zivpn]}"
+        "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}"
+        "SlowDNS" "${svc_map[slowdns]}" "BadVPN" "${svc_map[badvpn-udpgw]}"
+        "cloudflared" "${svc_map[cloudflared]}" "Web panel" "${svc_map[ragnar-web]}"
+    )
+    local idx
+    for ((idx=0; idx<${#svc_pairs[@]}; idx+=4)); do
+        compact_svc_cell "${svc_pairs[idx]}" "${svc_pairs[idx+1]}" c1 v1
+        compact_svc_cell "${svc_pairs[idx+2]}" "${svc_pairs[idx+3]}" c2 v2
+        pad=$((half - v1)); (( pad < 1 )) && pad=1
+        printf -v txt '%s%*s%s' "$c1" "$pad" '' "$c2"
+        r_txt+=("$txt"); r_vis+=("$((v1 + pad + v2))")
+    done
+
+    local total=${#l_txt[@]} i lpad
+    (( ${#r_txt[@]} > total )) && total=${#r_txt[@]}
+    for ((i=0; i<total; i++)); do
+        lpad=$((lw - ${l_vis[i]:-0})); (( lpad < 0 )) && lpad=0
+        printf '%s%*s %s│%s %s\n' "${l_txt[i]:-}" "$lpad" '' "$DIM" "$N" "${r_txt[i]:-}"
+    done
+    local lr rr
+    ui_repeat lr "$((lw + 1))" '─'; ui_repeat rr "$((rw + 1))" '─'
+    printf '%s%s┴%s%s\n' "$DIM" "$lr" "$rr" "$N"
+}
+compact_menu_pair() {
+    local lw=$1 lk=$2 ll=$3 lwarn=$4 rk=$5 rl=$6 rwarn=$7
+    local li=$C ri=$C lstr='' lvis=0 rstr='' pad
+    [[ $lwarn == warn ]] && li=$Y
+    [[ $lwarn == dim ]] && li=$DIM
+    [[ $rwarn == warn ]] && ri=$Y
+    [[ $rwarn == dim ]] && ri=$DIM
+    if [[ -n $lk ]]; then
+        printf -v lstr '  %s[%s%s%2s%s%s]%s %s' "$DIM" "$li" "$B" "$lk" "$N" "$DIM" "$N" "$ll"
+        lvis=$((7 + ${#ll}))
+    elif [[ -n $ll ]]; then
+        lstr="  ${C}▸ ${B}${ll}${N}"
+        lvis=$((4 + ${#ll}))
+    fi
+    if [[ -n $rk ]]; then
+        printf -v rstr '%s[%s%s%2s%s%s]%s %s' "$DIM" "$ri" "$B" "$rk" "$N" "$DIM" "$N" "$rl"
+    elif [[ -n $rl ]]; then
+        if [[ $rwarn == dim ]]; then
+            rstr="${DIM}${rl}${N}"
+        else
+            rstr="${C}▸ ${B}${rl}${N}"
+        fi
+    fi
+    if [[ -z $rstr ]]; then
+        printf '%s\n' "$lstr"
+        return 0
+    fi
+    pad=$((lw - lvis)); (( pad < 1 )) && pad=1
+    printf '%s%*s   %s\n' "$lstr" "$pad" '' "$rstr"
 }
 
 print_header() {
@@ -256,6 +667,11 @@ PY
         svc_map[cloudflared]='No tunnel'
     fi
 
+    if [[ ${LAYOUT:-classic} == compact ]] && (( UI_COLS >= 72 )); then
+        compact_dashboard_body
+        return 0
+    fi
+
     section "HOST"
     facts "Provider" "${isp:-Unknown}" "OS" "${os:-Linux}" \
           "Uptime" "${up:-n/a}" "Time" "$now"
@@ -277,9 +693,26 @@ PY
           "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}" \
           "SlowDNS" "${svc_map[slowdns]}" "BadVPN" "${svc_map[badvpn-udpgw]}" \
           "cloudflared" "${svc_map[cloudflared]}" "Web panel" "${svc_map[ragnar-web]}"
+    ui_box_close
 }
 
 main_menu() {
+    if [[ ${LAYOUT:-classic} == compact ]] && (( UI_COLS >= 72 )); then
+        local lw=$(( (UI_COLS - 3) / 2 ))
+        compact_menu_pair "$lw" "" "ACCOUNTS & ACCESS" "" "" "SERVICES & MONITORING" ""
+        compact_menu_pair "$lw" "1" "SSH / SSL accounts" "" "5" "SlowDNS" ""
+        compact_menu_pair "$lw" "2" "Xray accounts" "" "6" "Cloudflare" ""
+        compact_menu_pair "$lw" "3" "UDP ZIVPN" "" "7" "Web panel" ""
+        compact_menu_pair "$lw" "4" "UDP Custom" "" "8" "Status" ""
+        compact_menu_pair "$lw" "" "" "" "9" "Tools" ""
+        printf '\n'
+        compact_menu_pair "$lw" "" "SYSTEM" "" "" "" ""
+        compact_menu_pair "$lw" "10" "Update panel" "" "12" "Reboot VPS" "warn"
+        compact_menu_pair "$lw" "11" "Clear RAM cache" "" "13" "Uninstall panel" "warn"
+        compact_menu_pair "$lw" "t" "Appearance" "" "l" "Layout" ""
+        compact_menu_pair "$lw" "x" "Exit" "dim" "" "@farisbazed · t.me/ragnaresim" "dim"
+        return 0
+    fi
     section "ACCOUNTS & ACCESS"
     opt 1 "SSH / SSL accounts" "Users, expiry, quota, IP limits"
     opt 2 "Xray accounts" "VLESS · VMess · Trojan · SSWS · AnyTLS"
@@ -296,7 +729,8 @@ main_menu() {
     opt 11 "Clear RAM cache" "Drop Linux filesystem caches"
     opt 12 "Reboot VPS" "Restart the whole server" warn
     opt 13 "Uninstall panel" "Restore snapshots and remove Ragnar" warn
-    opt t "Appearance" "Choose a terminal theme"
+    opt t "Appearance" "Theme and panel layout"
+    opt l "Layout" "Choose a terminal design"
     opt x "Exit" "Leave this menu"
     paragraph "@farisbazed · https://t.me/ragnaresim" "$DIM"
 }
@@ -466,6 +900,7 @@ xray_link_browser() {
             opt "${#choices[@]}" "$label"
             last=$group
         done <<< "$catalog"
+        [[ $UI_BOX_OPEN == 1 ]] && ui_box_close
         printf '\n'
         [[ -n $filter ]] || opt A "Reveal all $count links"
         opt 0 "Back"
@@ -883,6 +1318,7 @@ update_panel() {
     page_header "Update panel" "Install the latest version from the main branch."
     section "BEFORE YOU UPDATE"
     paragraph "A backup is saved to /root first. Users, settings, certificates and SlowDNS keys are kept."
+    ui_box_close
     echo
     bash "$RAGNAR_DIR/core/update.sh" check || true
     echo
@@ -929,7 +1365,8 @@ fi
 
 while true; do
     print_header; main_menu
-    read -rp "  $C›$N Select menu: " opt || exit 0
+    ui_box_close
+    read -rp "$(ui_prompt_prefix)Select menu: " opt || exit 0
     case $opt in
         1) ssh_menu ;;
         2) xray_menu ;;
@@ -950,6 +1387,7 @@ while true; do
                 [ -d "$RAGNAR_DIR" ] || exit 0
             fi ;;
         t|T) theme_menu ;;
+        l|L) layout_menu ;;
         x|X) theme_reset_terminal; clear_screen; echo "Bye - @farisbazed / https://t.me/ragnaresim"; exit 0 ;;
         *) invalid_choice ;;
     esac
