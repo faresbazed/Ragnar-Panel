@@ -648,7 +648,7 @@ PY
     IFS=$'\x1f' read -r bw_today bw_month bw_src s_vmess s_vless s_trojan s_ssws s_ssh s_zivpn s_total s_online <<<"$dash_tsv"
 
     # Single batched systemctl call for all header services
-    local -a units=(xray haproxy dropbear sing-box udp-custom zivpn ragnar-wsproxy slowdns badvpn-udpgw ragnar-web cloudflared)
+    local -a units=(xray haproxy dropbear sing-box udp-custom zivpn ragnar-wsproxy slowdns badvpn-udpgw ragnar-web cloudflared dnstm-dnsrouter dnstm-slip1)
     local -a states=()
     mapfile -t states < <(systemctl is-active "${units[@]}" 2>/dev/null || true)
     declare -A svc_map=()
@@ -692,7 +692,8 @@ PY
           "UDP Custom" "${svc_map[udp-custom]}" "ZIVPN" "${svc_map[zivpn]}" \
           "SSH WS" "${svc_map[ragnar-wsproxy]}" "WSS / SSL" "${svc_map[haproxy]}" \
           "SlowDNS" "${svc_map[slowdns]}" "BadVPN" "${svc_map[badvpn-udpgw]}" \
-          "cloudflared" "${svc_map[cloudflared]}" "Web panel" "${svc_map[ragnar-web]}"
+          "cloudflared" "${svc_map[cloudflared]}" "Web panel" "${svc_map[ragnar-web]}" \
+          "DNS Router" "${svc_map[dnstm-dnsrouter]:-n/a}" "Slipstream" "${svc_map[dnstm-slip1]:-n/a}"
     ui_box_close
 }
 
@@ -724,6 +725,7 @@ main_menu() {
     opt 7 "Web panel" "URL, admin password and service"
     opt 8 "Status" "Services, bandwidth and listening ports"
     opt 9 "Tools" "Restart, backup, checks and diagnostics"
+    opt 14 "Slipstream" "QUIC-over-DNS tunnel (fast, Android)"
     section "SYSTEM"
     opt 10 "Update panel" "Back up state, then update from GitHub"
     opt 11 "Clear RAM cache" "Drop Linux filesystem caches"
@@ -1195,6 +1197,54 @@ except Exception:
         esac
     done
 }
+slipstream_menu() {
+    # Slipstream (QUIC-over-DNS) through dnstm's port-53 router.
+    # core/slipstream-setup.sh handles install/config; cannot run together
+    # with the SlowDNS module (both need UDP 53).
+    local SETUP="$RAGNAR_DIR/core/slipstream-setup.sh"
+    [ -f "$SETUP" ] || SETUP="$DIR/core/slipstream-setup.sh"
+    while true; do
+        page_header "SLIPSTREAM (QUIC DNS)" "Fast DNS tunnel for Android clients (Hero DNSTT / SlipNet). Runs via dnstm."
+        local dom router_state slip_state
+        dom=$(dnstm tunnel list 2>/dev/null | awk '$1=="slip1"{print $5}')
+        router_state=$(systemctl is-active dnstm-dnsrouter 2>/dev/null)
+        slip_state=$(systemctl is-active dnstm-slip1 2>/dev/null)
+        echo "Router   : ${router_state:-not installed} (UDP/TCP 53)"
+        echo "Tunnel   : ${slip_state:-not installed} (slip1 -> SOCKS backend)"
+        echo "Domain   : ${dom:-not set}"
+        if systemctl is-active --quiet slowdns 2>/dev/null; then
+            echo "WARNING  : SlowDNS is active and fights for port 53 - stop it (SlowDNS menu, option 9)"
+        fi
+        echo "DNS needs: A record ns.<domain> -> this server, NS record for the"
+        echo "           tunnel subdomain -> ns.<domain> (Cloudflare: DNS only)."
+        echo "iPhone   : iOS clients use plain DNSTT, not Slipstream (SlowDNS menu)."
+        section "SETUP"
+        opt 1 "Install / set up Slipstream" "dnstm router + slip1 tunnel"
+        opt 2 "Set domain" "e.g. t.yourdomain.com, then start"
+        opt 3 "Show client config" "Domain, certificate and dnst:// link"
+        opt 4 "Diagnostics" "Router, listener and NS delegation"
+        section "SERVICE"
+        opt 5 "Restart tunnel" "Restart slip1"
+        opt 6 "Stop tunnel" "Stop and disable slip1"
+        opt 7 "Start tunnel" "Start and enable slip1"
+        opt 0 "Back" "Return to the dashboard"
+        menu_choice "Select an option:" || return
+        c=$MENU_CHOICE
+        case $c in
+            1) bash "$SETUP" setup "${dom:-}"; pause ;;
+            2) read -rp "Tunnel domain (e.g. t.yourdomain.com): " v
+               [ -z "$v" ] && { echo "Domain cannot be empty"; pause; continue; }
+               bash "$SETUP" setup "$v"; pause ;;
+            3) bash "$SETUP" config; pause ;;
+            4) bash "$SETUP" diagnose; pause ;;
+            5) dnstm tunnel restart -t slip1 && echo restarted; pause ;;
+            6) dnstm tunnel stop -t slip1 && echo stopped; pause ;;
+            7) dnstm tunnel start -t slip1 && echo started; pause ;;
+            0) return ;;
+            *) invalid_choice ;;
+        esac
+    done
+}
 cloudflared_menu() {
     while true; do
         page_header "Cloudflare" "Domains, link hostnames and tunnels."
@@ -1373,6 +1423,7 @@ while true; do
         3) zivpn_menu ;;
         4) udpcustom_menu ;;
         5) slowdns_menu ;;
+        14) slipstream_menu ;;
         6) cloudflared_menu ;;
         7) webpanel_menu ;;
         8) status_page ;;
