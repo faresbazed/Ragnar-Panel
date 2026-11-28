@@ -107,6 +107,18 @@ So SSH-SSL, WSS and AnyTLS genuinely share 443, and no service can kill
 another by grabbing its port. Backends: OpenSSH 22, Dropbear 109,
 SSH-WS proxy 10005, Xray 10001–10004, AnyTLS 10006 (plus 8446 fallback).
 
+**Checking TLS 1.3:** connect directly to the panel domain (not a Cloudflare
+tunnel or the `anytls.` subdomain), replacing `vpn.example.com` below:
+
+```bash
+openssl s_client -connect vpn.example.com:443 -servername vpn.example.com \
+  -tls1_3 -verify_hostname vpn.example.com -verify_return_error -brief
+```
+
+Leave the connection open without typing. `Protocol version: TLSv1.3`
+confirms negotiation; an `SSH-2.0-…` banner confirms the SSH backend too.
+For a self-signed install, supply the trusted panel certificate with `-CAfile`.
+
 ## Features
 
 ### SSH & SSL users
@@ -252,6 +264,8 @@ tests/             local tests: python3 tests/test_ragnar.py
 
 - Core unit tests: 41 checks (users, UUID validation, edits, links, config, enforcement)
 - Installer-state regression test: `bash tests/test_install_state.sh`
+- TLS routing regression test: `python3 tests/test_tls_routing.py -v`
+  (requires HAProxy and OpenSSL; uses only temporary loopback ports)
 - Generated Xray config validated with **real Xray 25.10.15**, and all
   four WS protocols tunnelled live traffic through it
 - Generated sing-box config validated with **real sing-box 1.12.9**;
